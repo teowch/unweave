@@ -1,0 +1,6 @@
+.venv/
+*.wav
+*.mp3
+output/
+uploads/
+node_modules/

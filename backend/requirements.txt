@@ -1,0 +1,6 @@
+flask
+flask-cors
+demucs
+soundfile
+numpy
+yt-dlp
