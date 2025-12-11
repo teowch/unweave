@@ -251,7 +251,13 @@ function PlayerModal({ track, onClose, onRefresh }) {
       const initialChecks = {}
       const initialVols = {}
       track.stems.forEach(s => {
-        initialChecks[s] = true
+        // Defaults: lead and backing unchecked, others checked
+        const name = s.toLowerCase()
+        if (name === 'lead.wav' || name === 'backing.wav') {
+          initialChecks[s] = false
+        } else {
+          initialChecks[s] = true
+        }
         initialVols[s] = 1.0
       })
       setCheckedStems(initialChecks)
@@ -478,9 +484,9 @@ function PlayerModal({ track, onClose, onRefresh }) {
               </a>
             )}
           </div>
-            <button className={`play-btn ${isPlaying ? 'playing' : ''}`} onClick={() => setIsPlaying(!isPlaying)}>
-              {isPlaying ? <PauseIcon /> : <PlayIcon />}
-            </button>
+          <button className={`play-btn ${isPlaying ? 'playing' : ''}`} onClick={() => setIsPlaying(!isPlaying)}>
+            {isPlaying ? <PauseIcon /> : <PlayIcon />}
+          </button>
 
           <div className="volume-control-global">
             <VolumeIcon />

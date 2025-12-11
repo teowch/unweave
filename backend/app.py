@@ -50,6 +50,24 @@ def is_silent(filepath, threshold=0.01):
         print(f"Error checking silence for {filepath}: {e}")
         return False
 
+def sort_stems(stems):
+    """
+    Sort stems to ensure 'vocals.wav' comes before 'lead.wav' and 'backing.wav'.
+    Other stems are sorted alphabetically or by creation time (handled before calling this if needed).
+    Here we prioritize specific names.
+    stems: list of filenames or dict objects with 'name' key.
+    """
+    def get_name(s):
+        return s['name'] if isinstance(s, dict) else s
+
+    def priority(name):
+        if name == 'vocals.wav': return 0
+        if name == 'lead.wav': return 1
+        if name == 'backing.wav': return 2
+        return 3
+
+    return sorted(stems, key=lambda s: (priority(get_name(s)), get_name(s)))
+
 def get_track_history():
     history = []
     if os.path.exists(app.config['OUTPUT_FOLDER']):
@@ -64,30 +82,68 @@ def get_track_history():
                     
                     # Find stems inside
                     original_file = None
-                    metadata_path = os.path.join(folder_path, 'metadata.json')
-                    if os.path.exists(metadata_path):
-                        try:
-                            with open(metadata_path, 'r') as f:
-                                meta = json.load(f)
-                                original_file = meta.get('original_file')
-                        except:
-                            pass
-
-                    # Demucs output structure varies. 
-                    # If we moved files to the root of ID folder:
                     stem_files = []
+                    
+                    # Identify original file using folder name heuristics or content check
+                    # We expect original_file to match the suffix of the folder name OR just exist
+                    # Let's look for a file that is NOT a stem
+                    
+                    # Current strategy: We know the logic uses `filename` in `process_and_collect_stems`
+                    # In `separate_audio`, original is copied as `filename`.
+                    # In `separate_url`, original is moved as `filename`.
+                    
+                    # Improve: Search for file matching `original_name` (extension might vary)
+                    # Or check for the largest file? No.
+                    
+                    # Revert to robust search:
+                    # Folder ID suffix is `secure_filename(filename_no_ext)`.
+                    # Original file likely has that base name + extension.
+                    
                     for f in os.listdir(folder_path):
-                         # Skip metadata and original file
-                         if f == 'metadata.json': continue
-                         if original_file and f == original_file: continue
+                         # Skip known stem names if they match exact stem logic (unlikely to clash with original unless titled "vocals.wav")
+                         
+                         full_path = os.path.join(folder_path, f)
+                         if not os.path.isfile(full_path): continue
+                         
+                         # Check if this might be the original file
+                         # Suffix check: folder_name ends with secure_filename(name)
+                         # Simple check: `original_name` (from folder split) is safe string.
+                         # Original file name might be slightly different if secure_filename changed it.
+                         
+                         # Best effort: Assume original file is the one that is NOT a generated stem?
+                         # Stems: vocals, drums, bass, other, lead, backing, *.unified.wav
+                         # But user files can be anything.
+                         
+                         # Let's rely on the fact we cleaned up metadata reading. 
+                         # We need to guess 'original_file' for the UI 'download original'.
+                         # If we can't be 100% sure, maybe we just look for non-standard stem names?
+                         
+                         # BETTER: Look for file starting with original_name?
+                         # The folder format is `TIMESTAMP_TIMESTAMP_NAME`.
+                         # The file inside is `NAME.ext`.
+                         # `original_name` derived from folder might be missing extension.
+                         
+                         # Let's try to find a file whose name matches `original_name` (ignoring ext)
+                         
+                         f_name_no_ext = os.path.splitext(f)[0]
+                         if secure_filename(f_name_no_ext) == original_name:
+                             original_file = f
+                         elif f == original_name: # In case it had extension in folder text (unlikely)
+                             original_file = f
                          
                          if f.endswith('.wav') or f.endswith('.mp3'):
-                             full_path = os.path.join(folder_path, f)
                              stem_files.append((f, os.path.getmtime(full_path)))
                     
+                    # If we found original, remove it from stems list
+                    if original_file:
+                        stem_files = [x for x in stem_files if x[0] != original_file]
+
                     # Sort by modification time descending (newest first)
-                    stem_files.sort(key=lambda x: x[1], reverse=True)
-                    stems = [x[0] for x in stem_files]
+                    # stem_files.sort(key=lambda x: x[1], reverse=True) 
+                    # Replaced by name sorting for specific stems
+                    
+                    stems_names = [x[0] for x in stem_files]
+                    stems = sort_stems(stems_names)
                     
                     track_data = {
                         'id': folder_name,
@@ -99,7 +155,8 @@ def get_track_history():
                         track_data['original'] = original_file
                     
                     history.append(track_data)
-                except:
+                except Exception as e:
+                    print(f"Error reading history for {folder_name}: {e}")
                     continue
     # Sort by date desc
     history.sort(key=lambda x: x['id'], reverse=True)
@@ -112,36 +169,39 @@ def list_history():
 def process_and_collect_stems(final_output_dir, folder_id, original_filename):
     stems = []
     print(f"Processing stems in: {final_output_dir}")
+    
+    # First pass: collect existing stems
+    found_stems = []
     for stem_file in os.listdir(final_output_dir):
-         if stem_file == original_filename or stem_file == 'metadata.json': continue
+         if stem_file == original_filename: continue
          if stem_file.endswith('.wav') or stem_file.endswith('.mp3'):
-             stems.append({
-                 'name': stem_file,
-                 'url': f'/api/download/{folder_id}/{stem_file}'
-             })
-             
-             if stem_file == 'vocals.wav':
-                print("Found vocals.wav, attempting to split...")
-                try:
-                    generated_stems = separate_lead_and_backing(os.path.join(final_output_dir, 'vocals.wav'), final_output_dir)
-                    print(f"Generated sub-stems: {generated_stems}")
-                    for gen_stem in generated_stems:
-                        stem_name = os.path.basename(gen_stem)
-                        new_name = None
-                        if 'Vocals' in stem_name:
-                            new_name = 'lead.wav'
-                        elif 'Instrumental' in stem_name:
-                            new_name = 'backing.wav'
-                        
-                        if new_name:
-                            new_path = os.path.join(final_output_dir, new_name)
-                            shutil.move(gen_stem, new_path)
-                            stems.append({
-                                'name': new_name,
-                                'url': f'/api/download/{folder_id}/{new_name}'
-                            })
-                except Exception as e:
-                     print(f"Error splitting vocals: {e}")
+             found_stems.append(stem_file)
+
+    # Check for vocals splitting
+    if 'vocals.wav' in found_stems:
+         print("Found vocals.wav, attempting to split...")
+         try:
+             generated_stems = separate_lead_and_backing(os.path.join(final_output_dir, 'vocals.wav'), final_output_dir)
+             print(f"Generated sub-stems: {generated_stems}")
+             # Add generated stems to found list if not already there (though os.listdir check next time would find them)
+             for gs in generated_stems:
+                 name = os.path.basename(gs)
+                 if name not in found_stems:
+                     found_stems.append(name)
+         except Exception as e:
+              print(f"Error splitting vocals: {e}")
+
+    # Build response list
+    stems = []
+    for stem_file in found_stems:
+         stems.append({
+             'name': stem_file,
+             'url': f'/api/download/{folder_id}/{stem_file}'
+         })
+    
+    # Sort stems
+    stems = sort_stems(stems)
+
     return stems
 
 
@@ -191,15 +251,11 @@ def separate_audio():
                         shutil.move(stem_path, os.path.join(final_output_dir, stem))
             
             # Cleanup
-            shutil.rmtree(demucs_out) # Clean temp demucs out
+            # Clean temp demucs out
             
             # Save original file to final dir
             final_original_path = os.path.join(final_output_dir, filename)
             shutil.copy(temp_filepath, final_original_path)
-            
-            # Write metadata
-            with open(os.path.join(final_output_dir, 'metadata.json'), 'w') as f:
-                json.dump({'original_file': filename}, f)
 
             try:
                 os.remove(temp_filepath) # Clean upload
@@ -320,9 +376,7 @@ def separate_url():
            final_original_path = os.path.join(final_output_dir, filename)
            shutil.move(downloaded_filepath, final_original_path)
            
-           # Write metadata
-           with open(os.path.join(final_output_dir, 'metadata.json'), 'w') as f:
-               json.dump({'original_file': filename}, f)
+           # Metadata writing removed
 
         except:
             pass

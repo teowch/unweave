@@ -1,6 +1,13 @@
 from pathlib import Path
 from audio_separator.separator import Separator
 
+import json
+
+separator = Separator()
+
+with open("models.json", "w") as f:
+    json.dump(separator.list_supported_model_files(), f, indent=2)
+
 def separate_lead_and_backing(
     vocals_path: str,
     output_dir: str | None = None,
@@ -44,12 +51,12 @@ def separate_lead_and_backing(
     # depois disso já fica cacheado localmente.
     separator.load_model(model_filename=model_filename)
 
+    output_names = {
+        "Vocals": "lead.wav",
+        "Instrumental": "backing.wav"
+    }
+
     # Faz a separação do vocals.wav
-    output_files = separator.separate(str(vocals_path))
+    output_files = separator.separate(str(vocals_path), output_names)
 
-    print("Separação concluída! Arquivos gerados:")
-    for f in output_files:
-        print(" -", f)
-
-    # Retorna paths como string
-    return [str(p) for p in output_files]
+    return output_files
