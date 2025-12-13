@@ -13,6 +13,9 @@ import soundfile as sf
 import numpy as np
 import json
 
+import static_ffmpeg
+static_ffmpeg.add_paths() # Isso adiciona o ffmpeg temporário ao PATH
+
 app = Flask(__name__)
 CORS(app)
 
