@@ -253,7 +253,8 @@ function PlayerModal({ track, onClose, onRefresh }) {
       track.stems.forEach(s => {
         // Defaults: lead and backing unchecked, others checked
         const name = s.toLowerCase()
-        if (name === 'lead.wav' || name === 'backing.wav') {
+        // Check for lead/backing regardless of extension
+        if (name.startsWith('lead.') || name.startsWith('backing.')) {
           initialChecks[s] = false
         } else {
           initialChecks[s] = true
@@ -266,40 +267,7 @@ function PlayerModal({ track, onClose, onRefresh }) {
 
     lastTrackIdRef.current = track.id
 
-    // Stop audio on cleanup of the COMPONENT (not effect re-run, unless we handle it mostly via refs)
-    // Actually, we want to stop audio if we switch tracks entirely?
-    // The previous cleanup logic was:
-    // return () => { Object.values(audioRefs.current).forEach(...) }
-    // This runs before every effect execution.
-    // If we are refreshing, we might NOT want to stop audio?
-    // "So the tracks selected will sound there" -> implies continuity?
-    // If I just Unify, the list updates. The <audio> elements are re-rendered because the `stems` list map changed?
-    // The `key` is `stem` name. Existing stems have same keys. React preserves them.
-    // BUT, the `src` attribute depends on `track.id`? No, track.id is same.
-    // So <audio> shouldn't remount for existing stems.
-
-    // HOWEVER, this useEffect cleanup runs every time 'track' changes (which it does on refresh).
-    // So it PAUSES everything.
-    // We should prevent pausing if it is the same track.
-
     return () => {
-      // Only pause if we are actually unmounting or changing tracks
-      // But cleanup doesn't know the NEXT state.
-      // We can rely on the fact that if we stay on same track, the new effect run will restore state?
-      // No, `audio.pause()` stops playback.
-
-      // If we want seamless playback during Unify, we must avoid `audio.pause()` here.
-      // But how to detect?
-      // We can check `lastTrackIdRef.current`? No, that's updated.
-
-      // Simplest fix for now: The user said "persist selected", didn't explicitly demand "continuous playback without interruption".
-      // But resetting playback is annoying.
-
-      // If I remove the cleanup pause, I risk playing audio forever if component unmounts.
-      // But `useEffect(() => {}, [])` (mount/unmount) could handle unmount cleanup.
-      // This effect is `[track]`.
-
-      // Let's separate the cleanup logic.
     }
   }, [track])
 
@@ -553,7 +521,7 @@ function PlayerModal({ track, onClose, onRefresh }) {
                   className="stem-checkbox"
                 />
                 <span className="stem-name-small">
-                  {stem.replace('.wav', '').replace('.unified', '')}
+                  {stem.replace(/\.(wav|mp3|flac|ogg)$/i, '').replace('.unified', '')}
                   {stem.includes('.unified') && <span className="unified-tag">Unified</span>}
                 </span>
               </div>

@@ -12,10 +12,10 @@ import wave
 import soundfile as sf
 import numpy as np
 import json
-from vocal_split import separate_lead_and_backing
-
 import static_ffmpeg
 static_ffmpeg.add_paths() # Isso adiciona o ffmpeg temporário ao PATH
+from vocal_split import separate_lead_and_backing
+
 
 app = Flask(__name__)
 CORS(app)
@@ -52,24 +52,6 @@ def is_silent(filepath, threshold=0.01):
     except Exception as e:
         print(f"Error checking silence for {filepath}: {e}")
         return False
-
-def sort_stems(stems):
-    """
-    Sort stems to ensure 'vocals.wav' comes before 'lead.wav' and 'backing.wav'.
-    Other stems are sorted alphabetically or by creation time (handled before calling this if needed).
-    Here we prioritize specific names.
-    stems: list of filenames or dict objects with 'name' key.
-    """
-    def get_name(s):
-        return s['name'] if isinstance(s, dict) else s
-
-    def priority(name):
-        if name == 'vocals.wav': return 0
-        if name == 'lead.wav': return 1
-        if name == 'backing.wav': return 2
-        return 3
-
-    return sorted(stems, key=lambda s: (priority(get_name(s)), get_name(s)))
 
 def get_track_history():
     history = []
@@ -181,7 +163,7 @@ def process_and_collect_stems(final_output_dir, folder_id, original_filename):
              found_stems.append(stem_file)
 
     # Check for vocals splitting
-    if 'vocals.wav' in found_stems:
+    if False and 'vocals.wav' in found_stems:
          print("Found vocals.wav, attempting to split...")
          try:
              generated_stems = separate_lead_and_backing(os.path.join(final_output_dir, 'vocals.wav'), final_output_dir)
