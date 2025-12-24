@@ -75,9 +75,10 @@ def load_history_from_disk():
                 # Try to read metadata.json
                 metadata_path = os.path.join(folder_path, 'metadata.json')
                 
-                track_id = folder_name # Default ID is folder name
-                track_name = folder_name # Default name is folder name
+                track_id = folder_name
+                track_name = folder_name
                 original_file = None
+                track_date = folder_name # Default date is ID (legacy timestamp behavior)
                 
                 if os.path.exists(metadata_path):
                     try:
@@ -86,6 +87,8 @@ def load_history_from_disk():
                             track_id = meta.get('id', folder_name)
                             track_name = meta.get('name', folder_name)
                             original_file = meta.get('original_file')
+                            if 'date' in meta:
+                                track_date = meta['date']
                     except Exception as e:
                         print(f"Error reading metadata for {folder_name}: {e}")
                 
@@ -110,7 +113,7 @@ def load_history_from_disk():
                 track_data = {
                     'id': track_id,
                     'name': track_name,
-                    'date': track_id, # ID is now the timestamp
+                    'date': track_date,
                     'stems': stems_list,
                 }
                 if original_file:
@@ -170,7 +173,6 @@ def get_track_data(folder_id, name, timestamp, absolute_path):
         'name': name,
         'date': timestamp,
         'stems': stems,
-        # 'original': ... # We need to handle original file tracking
     }
 
 def sort_stems(stems):
@@ -186,6 +188,81 @@ def list_history():
     # Return the in-memory history list
     return jsonify(SESSION_HISTORY)
 
+def process_track_separation(folder_id, output_folder, filename, timestamp):
+    """
+    Common logic for processing a track after the original file has been placed in the output_folder.
+    """
+    try:
+        filename_no_ext = os.path.splitext(filename)[0]
+        original_file_path = os.path.join(output_folder, filename)
+
+        # Initialize AudioProcessor
+        processor = AudioProcessor(base_library=LIBRARY_FOLDER)
+        
+        # Run Separation Logic
+        modules_to_run = ["vocal_instrumental", "lead_backing", "male_female", "male_female_secondary", "htdemucs_6s"]
+        processor.process(original_file_path, modules_to_run, project_id=folder_id)
+        
+        # Save metadata.json
+        metadata_path = os.path.join(output_folder, 'metadata.json')
+        existing_metadata = {}
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r') as f:
+                    existing_metadata = json.load(f)
+            except:
+                pass
+
+        metadata = {
+            'id': folder_id,
+            'name': filename_no_ext,
+            'original_file': filename,
+            'date': timestamp
+        }
+        existing_metadata.update(metadata)
+        
+        with open(metadata_path, 'w') as f:
+            json.dump(existing_metadata, f, indent=2)
+        
+        # Register in Session
+        TRACK_SESSIONS[folder_id] = {
+            'path': output_folder,
+            'original': filename
+        }
+        
+        # Scan for stems
+        stems_list = []
+        for f in os.listdir(output_folder):
+            if f == filename: continue # valid original
+            if f == 'metadata.json': continue
+            if f.endswith('.wav') or f.endswith('.mp3') or f.endswith('.flac'):
+                stems_list.append(f)
+        
+        stems_list = sorted(stems_list)
+        
+        track_data = {
+            'id': folder_id,
+            'name': filename_no_ext,
+            'date': timestamp,
+            'stems': stems_list,
+            'original': filename
+        }
+        
+        # Prepend to history
+        SESSION_HISTORY.insert(0, track_data)
+        
+        resp_stems = [{'name': s, 'url': f'/api/download/{folder_id}/{s}'} for s in stems_list]
+
+        return jsonify({
+            'message': 'Separation successful',
+            'id': folder_id,
+            'stems': resp_stems 
+        })
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/separate', methods=['POST'])
 def separate_audio():
     if 'file' not in request.files:
@@ -198,80 +275,22 @@ def separate_audio():
     if file and allowed_file(file.filename):
         try:
             filename = secure_filename(file.filename)
-            temp_input_path = os.path.join(UPLOAD_FOLDER, filename)
-            file.save(temp_input_path)
+            filename_no_ext = os.path.splitext(filename)[0]
             
-            # Prepare Output Folder in Library
+            # Generate ID and Folder first
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            folder_id = timestamp
-            output_dir = os.path.join(LIBRARY_FOLDER, folder_id)
-
-            # Initialize AudioProcessor with specific output dir
-            processor = AudioProcessor(temp_input_path, output_dir=output_dir)
+            # We enforce a clean folder name: timestamp_sanitizedfilename
+            folder_id = f"{timestamp}_{filename_no_ext}" 
             
-            # Run Enriched Separation Logic
-            # 1. Vocals vs Instrumental
-            processor.extract_vocals_instrumental()
+            # Create persistent folder immediately
+            output_folder = os.path.join(LIBRARY_FOLDER, folder_id)
+            os.makedirs(output_folder, exist_ok=True)
             
-            # 2. Lead vs Backing (requires vocals)
-            processor.extract_lead_backing()
+            # Save original file DIRECTLY to the library folder
+            original_file_path = os.path.join(output_folder, filename)
+            file.save(original_file_path)
             
-            # 3. Instruments (Demucs)
-            processor.extract_instruments()
-            
-            # Post-Processing:
-            # We need to ensure the 'original' file is also in the output folder
-            shutil.copy(temp_input_path, os.path.join(processor.output_folder, filename))
-
-            # Save metadata.json
-            metadata = {
-                'id': folder_id,
-                'name': filename_no_ext, # Original User Filename
-                'original_file': filename
-            }
-            with open(os.path.join(processor.output_folder, 'metadata.json'), 'w') as f:
-                json.dump(metadata, f, indent=2)
-            
-            # Clean up upload input
-            try:
-                os.remove(temp_input_path)
-            except:
-                pass
-
-            # Register in Session
-            TRACK_SESSIONS[folder_id] = {
-                'path': processor.output_folder,
-                'original': filename
-            }
-            
-            # Scan for stems
-            stems_list = []
-            for f in os.listdir(processor.output_folder):
-                if f == filename: continue # valid original
-                if f == 'metadata.json': continue
-                if f.endswith('.wav') or f.endswith('.mp3') or f.endswith('.flac'):
-                    stems_list.append(f)
-            
-            stems_list = sorted(stems_list)
-            
-            track_data = {
-                'id': folder_id,
-                'name': filename_no_ext, # Display name
-                'date': timestamp,
-                'stems': stems_list,
-                'original': filename
-            }
-            
-            # Prepend to history
-            SESSION_HISTORY.insert(0, track_data)
-            
-            resp_stems = [{'name': s, 'url': f'/api/download/{folder_id}/{s}'} for s in stems_list]
-
-            return jsonify({
-                'message': 'Separation successful',
-                'id': folder_id,
-                'stems': resp_stems 
-            })
+            return process_track_separation(folder_id, output_folder, filename, timestamp)
 
         except Exception as e:
             import traceback
@@ -294,7 +313,7 @@ def separate_url():
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': os.path.join(UPLOAD_FOLDER, '%(title)s.%(ext)s'),
-            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': '192'}],
+            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'wav','preferredquality': '192'}],
             'prefer_ffmpeg': True,
             'keepvideo': False,
             'quiet': True
@@ -307,74 +326,31 @@ def separate_url():
             info = ydl.extract_info(url, download=True)
             temp_name = ydl.prepare_filename(info)
             base, _ = os.path.splitext(temp_name)
-            downloaded_filepath = base + ".mp3"
+            
+            downloaded_filepath = base + ".wav" 
+            
             filename = os.path.basename(downloaded_filepath)
 
         if not os.path.exists(downloaded_filepath):
              return jsonify({'error': 'Download failed'}), 500
 
-        # Prepare Output Folder in Library
+        # Create Persistent Folder
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         filename_no_ext = os.path.splitext(filename)[0]
-        folder_id = timestamp
-        output_dir = os.path.join(LIBRARY_FOLDER, folder_id)
+        folder_id = f"{timestamp}_{filename_no_ext}"
+        
+        output_folder = os.path.join(LIBRARY_FOLDER, folder_id)
+        os.makedirs(output_folder, exist_ok=True)
+        
+        # Move downloaded file to Library
+        persistent_filepath = os.path.join(output_folder, filename)
+        shutil.move(downloaded_filepath, persistent_filepath)
 
-        # 2. Process
-        processor = AudioProcessor(downloaded_filepath, output_dir=output_dir)
-        processor.extract_vocals_instrumental()
-        processor.extract_lead_backing()
-        processor.extract_instruments()
-        
-        # Copy original
-        shutil.copy(downloaded_filepath, os.path.join(processor.output_folder, filename))
-
-        # Save metadata.json
-        metadata = {
-            'id': folder_id,
-            'name': filename_no_ext,
-            'original_file': filename
-        }
-        with open(os.path.join(processor.output_folder, 'metadata.json'), 'w') as f:
-            json.dump(metadata, f, indent=2)
-        
-        # Cleanup upload
-        try: os.remove(downloaded_filepath)
-        except: pass
-
-        # 3. Register Session
-        TRACK_SESSIONS[folder_id] = {
-            'path': processor.output_folder,
-            'original': filename
-        }
-        
-        stems_list = []
-        for f in os.listdir(processor.output_folder):
-            if f == filename: continue
-            if f == 'metadata.json': continue
-            if f.endswith('.wav') or f.endswith('.mp3') or f.endswith('.flac'):
-                stems_list.append(f)
-        
-        stems_list = sorted(stems_list)
-        
-        track_data = {
-            'id': folder_id,
-            'name': filename_no_ext,
-            'date': timestamp,
-            'stems': stems_list,
-            'original': filename
-        }
-        
-        SESSION_HISTORY.insert(0, track_data)
-        
-        resp_stems = [{'name': s, 'url': f'/api/download/{folder_id}/{s}'} for s in stems_list]
-        
-        return jsonify({
-            'message': 'Separation successful',
-            'id': folder_id,
-            'stems': resp_stems
-        })
+        return process_track_separation(folder_id, output_folder, filename, timestamp)
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
 @app.route('/api/download/<folder_id>/<filename>', methods=['GET'])
