@@ -1,166 +1,222 @@
-from audio_separator.separator import Separator
 import os
-import tempfile
+import json
 import logging
+from typing import Dict, List, Optional, Any
+from audio_separator.separator import Separator
 
-import torch
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
-class AudioProcessor:
-    output_names = {
-        "vocal_instrumental": {
+WORKFLOW_MAP = {
+    "vocal_instrumental": {
+        "model": "model_bs_roformer_ep_368_sdr_12.9628.ckpt",
+        "depends_on": None,
+        "custom_output_names": {
             "Vocals": "base_vocals",
             "Instrumental": "base_instrumental"
-        },
-        "lead_backing": {
+        }
+    },
+    "lead_backing": {
+        "model": "mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt",
+        "depends_on": "vocal_instrumental",
+        "input_stem": "Vocals",
+        "custom_output_names": {
             "Vocals": "lead",
             "Instrumental": "backing"
-        },
-        "htdemucs_6s": {
-            "Vocals": "vocals_output",
-            "Drums": "drums_output",
-            "Bass": "bass_output",
-            "Other": "other_output",
-            "Guitar": "guitar_output",
-            "Piano": "piano_output",
+        }
+    },
+    "male_female": {
+        "model": "bs_roformer_male_female_by_aufr33_sdr_7.2889.ckpt",
+        "depends_on": "vocal_instrumental",
+        "input_stem": "Vocals",
+        "custom_output_names": {
+            "Male": "male",
+            "Female": "female"
+        }
+    },
+    "male_female_secondary": {
+        "model": "model_chorus_bs_roformer_ep_267_sdr_24.1275.ckpt",
+        "depends_on": "vocal_instrumental",
+        "input_stem": "Vocals",
+        "custom_output_names": {
+            "Male": "male_secondary",
+            "Female": "female_secondary"
+        }
+    },
+    "htdemucs_6s": {
+        "model": "htdemucs_6s.yaml",
+        "depends_on": None,
+        "custom_output_names": {
+            "Vocals": "htdemucs_6s_vocals",
+            "Drums": "htdemucs_6s_drums",
+            "Bass": "htdemucs_6s_bass",
+            "Other": "htdemucs_6s_other",
+            "Guitar": "htdemucs_6s_guitar",
+            "Piano": "htdemucs_6s_piano",
         }
     }
+}
 
-    def __init__(self, input_audio, output_format="flac", output_dir=None):
-        self.input_audio = input_audio
+class AudioProcessor:
+    """
+    Handles audio separation workflows using the audio-separator library.
+    Manages dependency resolution between separation models and state persistence.
+    """
+
+    def __init__(self, output_format: str = "flac", base_library: str = "Library"):
         self.output_format = output_format
-        
-        # Determine output folder
-        if output_dir:
-            self.output_folder = output_dir
+        self.base_library = base_library
+        self.state: Dict[str, Any] = {"input_original": None, "results": {}}
+        self.current_session_folder: Optional[str] = None
+        self.separator = Separator(output_format=self.output_format)
+
+    def _get_metadata_path(self, session_folder: str) -> str:
+        return os.path.join(session_folder, "metadata.json")
+
+    def _save_state(self) -> None:
+        """Saves the current processing state to metadata.json."""
+        if self.current_session_folder:
+            path = self._get_metadata_path(self.current_session_folder)
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(self.state, f, indent=4, ensure_ascii=False)
+            except IOError as e:
+                logger.error(f"Failed to save state to {path}: {e}")
+
+    def _initialize_session(self, audio_file: str, project_id: Optional[str] = None) -> None:
+        """Sets up the session folder and loads existing state if available."""
+        if project_id:
+            base_name = project_id
         else:
-            # Default to "Library" in the current working directory if not specified
-            # We create a subfolder based on the input filename to keep it organized
-            base_name = os.path.splitext(os.path.basename(input_audio))[0]
-            library_path = os.path.join(os.getcwd(), 'Library')
-            self.output_folder = os.path.join(library_path, base_name)
+            base_name = os.path.splitext(os.path.basename(audio_file))[0]
 
-        os.makedirs(self.output_folder, exist_ok=True)
+        self.current_session_folder = os.path.join(self.base_library, base_name)
+        os.makedirs(self.current_session_folder, exist_ok=True)
         
-        # Check for CUDA capability
-        device_env = 'auto'
-        try:
-            if torch.cuda.is_available():
-                # Try a small operation to ensure kernels are compatible
-                print("Testing CUDA compatibility...")
-                torch.tensor([1.0]).cuda()
-                print("CUDA is available and working.")
-            else:
-                print("CUDA not available in Torch.")
-        except RuntimeError as e:
-            print(f"CUDA validation failed: {e}")
-            print("Falling back to CPU.")
-            device_env = 'cpu'
-        except Exception as e:
-            print(f"Unexpected error during CUDA check: {e}")
-            print("Falling back to CPU.")
-            device_env = 'cpu'
+        metadata_path = self._get_metadata_path(self.current_session_folder)
+        if os.path.exists(metadata_path):
+            try:
+                with open(metadata_path, 'r', encoding='utf-8') as f:
+                    self.state = json.load(f)
+                logger.info(f"Loaded existing session from {self.current_session_folder}")
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to load metadata, initializing new state: {e}")
+                self.state = {"input_original": audio_file, "results": {}}
+        else:
+            # Initialize with input_original if it serves as the base
+            self.state = {"input_original": audio_file, "results": {}}
+
+    def _get_module_input(self, module_name: str) -> str:
+        """
+        Recursively resolves input dependencies for a given module.
+        """
+        config = WORKFLOW_MAP[module_name]
+        
+        # Base Case: No dependencies, use original input
+        if not config["depends_on"]:
+            val = self.state.get("input_original")
+            if not val:
+                 # Fallback or error? If initialized correctly, it enters here.
+                 # If partially loaded metadata is missing 'input_original', that's an issue.
+                 raise ValueError("Original input file is missing in state.")
+            return val
+        
+        parent_module = config["depends_on"]
+        
+        # If parent hasn't run, recurse
+        if parent_module not in self.state["results"]:
+            logger.info(f"Resolving dependency: '{module_name}' needs '{parent_module}'")
+            self._run_module(parent_module)
             
-        # O Separator é inicializado uma vez, mas carregamos modelos sob demanda
-        if device_env == 'cpu':
-             os.environ["CUDA_VISIBLE_DEVICES"] = ""
-             print("Forced CPU mode by hiding CUDA devices.")
+        # Get parent output
+        parent_outputs = self.state["results"][parent_module].get("outputs", {})
+        input_stem_key = config["input_stem"]
+        
+        if input_stem_key not in parent_outputs:
+            available = list(parent_outputs.keys())
+            error_msg = (f"Dependency error: Module '{module_name}' requires '{input_stem_key}' "
+                         f"from '{parent_module}', but it was not found. Available: {available}")
+            logger.error(error_msg)
+            raise KeyError(error_msg)
 
-        self.separator = Separator(
-            output_dir=self.output_folder, 
-            output_format=self.output_format
+        return parent_outputs[input_stem_key]
+
+    def _run_module(self, module_name: str) -> Dict[str, str]:
+        """
+        Executes separation for a specific module, handling inputs and outputs.
+        """
+        # 1. Idempotency Check
+        if module_name in self.state["results"]:
+            logger.info(f"Module '{module_name}' already processed. Skipping.")
+            return self.state["results"][module_name]["outputs"]
+
+        # 2. Resolve Input
+        try:
+            input_path = self._get_module_input(module_name)
+        except Exception as e:
+            logger.error(f"Failed to resolve input for {module_name}: {e}")
+            raise
+
+        config = WORKFLOW_MAP[module_name]
+        
+        # Ensure output directory is set
+        if self.current_session_folder:
+             self.separator.output_dir = self.current_session_folder
+        
+        # Load Model
+        logger.info(f"Loading model: {config['model']} for {module_name}")
+        self.separator.load_model(model_filename=config["model"])
+        
+        # Run Separation
+        logger.info(f"Processing module: {module_name}...")
+        self.separator.separate(
+            input_path, 
+            custom_output_names=config["custom_output_names"]
         )
+        
+        # 3. Map and Save Results
+        mapped_outputs = {}
+        for stem, filename in config["custom_output_names"].items():
+            full_path = os.path.join(self.current_session_folder, f"{filename}.{self.output_format}")
+            if os.path.exists(full_path):
+                mapped_outputs[stem] = full_path
+            else:
+                 logger.warning(f"Expected output file not found: {full_path}")
 
-        # Dicionário de Estado: Guarda o caminho dos arquivos que JÁ foram gerados
-        self.files = {
-            "source_vocals": None,       # Vocal limpo (pós Roformer 1296)
-            "source_instrumental": None, # Instrumental (pós Roformer 1296)
-            "lead": None,
-            "backing": None,
-            "stems": {                   # Stems do Demucs
-                "drums": None,
-                "bass": None, 
-                "guitar": None, 
-                "piano": None,
-                "other": None
-            }
+        self.state["results"][module_name] = {
+            "model": config["model"],
+            "input_used": input_path,
+            "outputs": mapped_outputs
         }
-
-    def _get_path(self, filename):
-        """Reconstrói o caminho completo baseado no nome e formato"""
-        full_name = f"{filename}.{self.output_format}"
-        return os.path.join(self.output_folder, full_name)
-
-    # =================================================================
-    # MÓDULO 1: Separação Base (Vocal vs Instrumental)
-    # =================================================================
-    def extract_vocals_instrumental(self):
-        """
-        Executa o BS-Roformer-1296.
-        Retorna os caminhos dos arquivos gerados.
-        """
-        print(">>> Iniciando Módulo: Extração de Vocais (BS-Roformer)...")
-        self.separator.load_model(model_filename="model_bs_roformer_ep_368_sdr_12.9628.ckpt")
+        self._save_state()
         
-        # Executa separação
-        self.separator.separate(self.input_audio, custom_output_names=self.output_names["vocal_instrumental"])
+        return mapped_outputs
 
-        # Atualiza o estado
-        self.files["source_vocals"] = self._get_path("base_vocals")
-        self.files["source_instrumental"] = self._get_path("base_instrumental")
+    def process(self, audio_file: str, requested_modules: List[str], project_id: Optional[str] = None) -> Dict[str, Any]:
+        """
+        Main entry point to process an audio file with requested modules.
         
-        return {
-            "vocals": self.files["source_vocals"],
-            "instrumental": self.files["source_instrumental"]
-        }
+        Args:
+            audio_file: Path to the input audio file.
+            requested_modules: List of module keys.
+            project_id: Optional unique identifier for the project/session.
 
-    # =================================================================
-    # MÓDULO 2: Separação Fina (Lead vs Backing)
-    # =================================================================
-    def extract_lead_backing(self):
+        Returns:
+            The final state dictionary.
         """
-        Executa o Mel-Band-Roformer.
-        DEPENDÊNCIA: Precisa que 'base_vocals' já exista. Se não existir, roda o Módulo 1 automaticamente.
-        """
-        # Verifica dependência
-        if not self.files["source_vocals"]:
-            print("(!) Aviso: Vocais não encontrados. Executando extração de vocais primeiro...")
-            self.extract_vocals_instrumental()
-
-        print(">>> Iniciando Módulo: Lead vs Backing...")
-        self.separator.load_model(model_filename="mel_band_roformer_karaoke_aufr33_viperx_sdr_10.1956.ckpt")
-
-        self.separator.separate(self.files["source_vocals"], custom_output_names=self.output_names["lead_backing"])
-
-        self.files["lead"] = self._get_path("final_lead")
-        self.files["backing"] = self._get_path("final_backing")
-
-        return {
-            "lead": self.files["lead"],
-            "backing": self.files["backing"]
-        }
-
-    # =================================================================
-    # MÓDULO 3: Separação de Instrumentos (Banda)
-    # =================================================================
-    def extract_instruments(self):
-        """
-        Executa o Demucs 6s.
-        Independente dos outros módulos.
-        """
-        print(">>> Iniciando Módulo: Instrumentos (Demucs)...")
-        self.separator.load_model(model_filename="htdemucs_6s.yaml")
+        self._initialize_session(audio_file, project_id)
         
-        self.separator.separate(self.input_audio, custom_output_names=self.output_names["htdemucs_6s"])
-        
-        vocals_output_path = self._get_path(self.output_names["htdemucs_6s"]["Vocals"])
-        if os.path.exists(vocals_output_path):
-            os.remove(vocals_output_path)
-
-        self.files["stems"]["drums"] = self._get_path("drums_output")
-        self.files["stems"]["bass"] = self._get_path("bass_output")
-        self.files["stems"]["guitar"] = self._get_path("guitar_output")
-        self.files["stems"]["piano"] = self._get_path("piano_output")
-        self.files["stems"]["other"] = self._get_path("other_output")
-
-
-        return self.files["stems"]
+        for module in requested_modules:
+            if module in WORKFLOW_MAP:
+                try:
+                    self._run_module(module)
+                except Exception as e:
+                    logger.error(f"Error processing module '{module}': {e}")
+                    # We continue to next module if one fails? 
+                    # If dependencies fail, _run_module raises exception, so dependent modules will fail.
+                    # Independent modules might still work.
+            else:
+                logger.warning(f"Unknown module requested: {module}")
+                
+        return self.state
