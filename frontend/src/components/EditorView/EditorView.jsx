@@ -1,17 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import axios from 'axios';
-import { DndContext, useDroppable } from '@dnd-kit/core';
+import { downloadStem } from '../../services/api';
 import TransportBar from './TransportBar';
 import StemRow from './StemRow';
 import StemBrowser from './StemBrowser';
 import './EditorView.css';
 
-const API_BASE = 'http://127.0.0.1:5000/api';
-
 const EditorView = ({ track, onBack, onUnify }) => {
     // --- State ---
     const [activeStemIds, setActiveStemIds] = useState([]); // List of stems in Player (Visible)
-    // loadedStemIds removed - we render all stems hidden instead.
     const [stemState, setStemState] = useState({}); // Vol, Mute, Solo for each stem
     const [audioUrls, setAudioUrls] = useState({});
     const [loadingStems, setLoadingStems] = useState({});
@@ -37,11 +33,6 @@ const EditorView = ({ track, onBack, onUnify }) => {
     useEffect(() => { activeStemIdsRef.current = activeStemIds; }, [activeStemIds]);
     useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
 
-    // --- Droppable Area (Player) ---
-    const { setNodeRef: setDropRef, isOver } = useDroppable({
-        id: 'player-stage',
-    });
-
     // --- Init ---
     useEffect(() => {
         // Init AudioContext
@@ -53,19 +44,33 @@ const EditorView = ({ track, onBack, onUnify }) => {
         // setLoadedStemIds([]);
         setAudioUrls({});
         const initial = {};
+
+        // Include all stems
         track.stems.forEach(s => {
-            initial[s] = { vol: 0.5, muted: false, solo: false, selected: false, pan: 0, locked: false };
+            initial[s] = { vol: 0.5, muted: false, solo: false, selected: false, locked: false };
         });
+
+        // Include original file if present
+        if (track.original) {
+            initial[track.original] = { vol: 0.5, muted: false, solo: false, selected: false, locked: false };
+        }
+
         setStemState(initial);
+
+        // Build full list of audio files to load (stems + original)
+        const allAudioFiles = [...track.stems];
+        if (track.original) {
+            allAudioFiles.push(track.original);
+        }
 
         // Fetch Audio Blobs
         const loadAll = async () => {
-            const promises = track.stems.map(async s => {
+            const promises = allAudioFiles.map(async s => {
                 setLoadingStems(prev => ({ ...prev, [s]: true }));
                 try {
-                    const res = await axios.get(`${API_BASE}/download/${track.id}/${s}`, { responseType: 'blob' });
+                    const blob = await downloadStem(track.id, s);
                     // Fix: Ensure we don't try to update state if component unmounted or track changed
-                    setAudioUrls(prev => ({ ...prev, [s]: URL.createObjectURL(res.data) }));
+                    setAudioUrls(prev => ({ ...prev, [s]: URL.createObjectURL(blob) }));
                 } catch (e) {
                     console.error('Error loading stem:', s, e);
                 } finally {
@@ -130,14 +135,6 @@ const EditorView = ({ track, onBack, onUnify }) => {
     }, [stemState, activeStemIds, mainVolume]);
 
     // --- Handlers ---
-    const handleDragEnd = (event) => {
-        const { active, over } = event;
-        if (over && over.id === 'player-stage') {
-            const stem = active.data.current.stem;
-            addToPlayer(stem);
-        }
-    };
-
     const addToPlayer = (stem) => {
         if (!activeStemIds.includes(stem)) {
             setActiveStemIds(prev => [...prev, stem]);
@@ -181,6 +178,50 @@ const EditorView = ({ track, onBack, onUnify }) => {
         }
     };
 
+    // Handle new stems from module processing without disrupting playback
+    const handleNewStemsAvailable = async (newStemsList) => {
+        // Find stems that are truly new (not already in track.stems)
+        const existingStems = new Set(track.stems);
+        const addedStems = newStemsList.filter(s => !existingStems.has(s));
+
+        if (addedStems.length === 0) return;
+
+        console.log('New stems available:', addedStems);
+
+        // Initialize state for new stems
+        setStemState(prev => {
+            const updated = { ...prev };
+            addedStems.forEach(s => {
+                if (!updated[s]) {
+                    updated[s] = { vol: 0.5, muted: false, solo: false, selected: false, locked: false };
+                }
+            });
+            return updated;
+        });
+
+        // Load audio for new stems (without affecting existing ones)
+        for (const stem of addedStems) {
+            setLoadingStems(prev => ({ ...prev, [stem]: true }));
+            try {
+                const { downloadStem } = await import('../../services/api');
+                const blob = await downloadStem(track.id, stem);
+                setAudioUrls(prev => ({ ...prev, [stem]: URL.createObjectURL(blob) }));
+            } catch (e) {
+                console.error('Error loading new stem:', stem, e);
+            } finally {
+                setLoadingStems(prev => ({ ...prev, [stem]: false }));
+            }
+        }
+
+        // Update track.stems in place (reference update for re-render)
+        // This is a bit hacky but avoids full track reload
+        addedStems.forEach(s => {
+            if (!track.stems.includes(s)) {
+                track.stems.push(s);
+            }
+        });
+    };
+
     // Sync Timeline Helper
     // We need one master timer or just read from one representative WS instance?
     // Wavesurfer has 'audioprocess' event.
@@ -208,8 +249,10 @@ const EditorView = ({ track, onBack, onUnify }) => {
         return () => clearInterval(checkTime);
     }, [isPlaying, activeStemIds, duration]);
 
-
-    const availableStems = track.stems.filter(s => !activeStemIds.includes(s));
+    // All audio items for rendering (stems + original)
+    const allAudioItems = track.original
+        ? [...track.stems, track.original]
+        : track.stems;
 
     const handleStageInteraction = (e) => {
         // Skip if clicking interactive elements (buttons/inputs)
@@ -249,105 +292,103 @@ const EditorView = ({ track, onBack, onUnify }) => {
     };
 
     return (
-        <DndContext onDragEnd={handleDragEnd}>
-            <div className="editor-view split-layout fade-in">
-                {/* Header */}
-                <header className="editor-header">
-                    <div className="left">
-                        <button onClick={onBack} className="btn btn-ghost">← Back</button>
-                        <h2>{track.name}</h2>
-                    </div>
-                    <div className="right">
-                        <button className="btn btn-secondary">Export Mix</button>
-                    </div>
-                </header>
+        <div className="editor-view split-layout fade-in">
+            {/* Header */}
+            <header className="editor-header">
+                <div className="left">
+                    <button onClick={onBack} className="btn btn-ghost">← Back</button>
+                    <h2>{track.name}</h2>
+                </div>
+                <div className="right">
+                    <button className="btn btn-secondary">Export Mix</button>
+                </div>
+            </header>
 
-                <div className="editor-body">
-                    {/* Left: Stem Browser */}
-                    <StemBrowser
-                        stems={availableStems}
-                        onMoveToPlayer={addToPlayer}
-                    />
+            <div className="editor-body">
+                {/* Left: Stem Browser */}
+                <StemBrowser
+                    allStems={track.stems}
+                    activeStemIds={activeStemIds}
+                    trackId={track.id}
+                    originalFile={track.original}
+                    onAddToPlayer={addToPlayer}
+                    onRemoveFromPlayer={removeFromPlayer}
+                    onDownloadStem={handleDownloadStem}
+                    onNewStemsAvailable={handleNewStemsAvailable}
+                />
 
-                    {/* Right: Mix Column (Transport + Player) */}
-                    <div className="mix-column">
-                        {/* Player Stage */}
-                        <div
-                            ref={setDropRef}
-                            className={`player-stage ${isOver ? 'drop-active' : ''}`}
-                        >
-                            <h3 className="stage-title">Player Stage</h3>
+                {/* Right: Mix Column (Transport + Player) */}
+                <div className="mix-column">
+                    {/* Player Stage */}
+                    <div className="player-stage">
+                        <h3 className="stage-title">Player Stage</h3>
 
-                            <TransportBar
-                                isPlaying={isPlaying}
-                                togglePlay={togglePlay}
-                                currentTime={currentTime}
-                                duration={duration}
-                                mainVolume={mainVolume}
-                                setMainVolume={setMainVolume}
-                                seek={seek}
-                                onSliderInteraction={(active) => sliderRef.current = active}
-                            />
+                        <TransportBar
+                            isPlaying={isPlaying}
+                            togglePlay={togglePlay}
+                            currentTime={currentTime}
+                            duration={duration}
+                            mainVolume={mainVolume}
+                            setMainVolume={setMainVolume}
+                            seek={seek}
+                            onSliderInteraction={(active) => sliderRef.current = active}
+                        />
 
-                            {activeStemIds.length === 0 && (
-                                <div className="empty-stage-hint">
-                                    Drag stems here or click the arrow to play
+                        {activeStemIds.length === 0 && (
+                            <div className="empty-stage-hint">
+                                Add stems from the browser to start playing
+                            </div>
+                        )}
+
+                        <div className="stems-list" ref={stemsListRef} onPointerDown={handleStageInteraction}>
+                            {allAudioItems.map(stem => (
+                                <StemRow
+                                    key={stem}
+                                    stem={stem}
+                                    visible={activeStemIds.includes(stem)}
+                                    // Guard against initial undefined state before effect runs
+                                    sState={stemState[stem] || { vol: 0.5, muted: false, solo: false, selected: false, locked: false }}
+                                    audioUrl={audioUrls[stem]}
+                                    onUpdate={(key, val) => updateStem(stem, key, val)}
+                                    onRemove={removeFromPlayer}
+                                    onDownload={handleDownloadStem}
+                                    registerWaveSurfer={(id, ws) => {
+                                        wsRefs.current[id] = ws;
+                                        // On load, if not active, mute it. Sync time.
+                                        if (ws) {
+                                            // Ensure it doesn't blast audio if not in active list
+                                            if (!activeStemIdsRef.current.includes(stem)) {
+                                                ws.setVolume(0);
+                                            }
+
+                                            // Sync to current global time immediately
+                                            ws.setTime(currentTimeRef.current);
+
+                                            // If global player is running, valid stems should start independently
+                                            if (isPlayingRef.current) {
+                                                ws.play();
+                                            }
+                                        }
+                                    }}
+                                    isPlaying={isPlaying}
+                                    currentTime={currentTime}
+                                    audioContext={audioContext}
+                                />
+                            ))}
+                            {activeStemIds.length > 0 && (
+                                <div className="needle-wrapper">
+                                    <div
+                                        className="global-needle"
+                                        style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                                    />
                                 </div>
                             )}
-
-                            <div className="stems-list" ref={stemsListRef} onPointerDown={handleStageInteraction}>
-                                {track.stems.map(stem => (
-                                    <StemRow
-                                        key={stem}
-                                        stem={stem}
-                                        visible={activeStemIds.includes(stem)}
-                                        // Guard against initial undefined state before effect runs
-                                        sState={stemState[stem] || { vol: 0.5, muted: false, solo: false, selected: false, pan: 0, locked: false }}
-                                        audioUrl={audioUrls[stem]}
-                                        onUpdate={(key, val) => updateStem(stem, key, val)}
-                                        onRemove={removeFromPlayer}
-                                        onDownload={handleDownloadStem}
-                                        registerWaveSurfer={(id, ws) => {
-                                            wsRefs.current[id] = ws;
-                                            // On load, if not active, mute it. Sync time.
-                                            if (ws) {
-                                                // Ensure it doesn't blast audio if not in active list
-                                                if (!activeStemIdsRef.current.includes(stem)) {
-                                                    ws.setVolume(0);
-                                                }
-
-                                                // Sync to current global time immediately
-                                                ws.setTime(currentTimeRef.current);
-
-                                                // If global player is running, valid stems should start independently
-                                                if (isPlayingRef.current) {
-                                                    ws.play();
-                                                }
-                                            }
-                                        }}
-                                        isPlaying={isPlaying}
-                                        currentTime={currentTime}
-                                        audioContext={audioContext}
-                                    />
-                                ))}
-                                {activeStemIds.length > 0 && (
-                                    <div className="needle-wrapper">
-                                        <div
-                                            className="global-needle"
-                                            style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
-                                        />
-                                    </div>
-                                )}
-                            </div>
                         </div>
                     </div>
                 </div>
-
-
             </div>
-        </DndContext>
+        </div>
     );
 };
 
 export default EditorView;
-

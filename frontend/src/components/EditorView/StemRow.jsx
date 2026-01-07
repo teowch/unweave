@@ -2,6 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import './EditorView.css';
 import { useContextMenu } from '../ContextMenu/ContextMenuProvider';
+import drumIcon from '../../assets/drum.png';
+
 
 // SVG Icons
 const MuteIcon = ({ active }) => (
@@ -54,9 +56,99 @@ const LockIcon = ({ locked }) => (
     </svg>
 );
 
+const MoreIcon = () => (
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <circle cx="8" cy="3" r="1.5" fill="currentColor" />
+        <circle cx="8" cy="8" r="1.5" fill="currentColor" />
+        <circle cx="8" cy="13" r="1.5" fill="currentColor" />
+    </svg>
+);
+
+// Custom Horizontal Bar Component
+const HorizontalBar = ({ value, min, max, onChange, mode = 'fill', origin = 'left', label, disabled, ticks = [] }) => {
+    const barRef = useRef(null);
+
+    const handleInteraction = (clientX) => {
+        if (disabled || !barRef.current) return;
+        const rect = barRef.current.getBoundingClientRect();
+        const width = rect.width;
+        // Calculate normalized value (0 to 1) from left
+        const relativeX = Math.max(0, Math.min(width, clientX - rect.left));
+        const percentage = relativeX / width;
+
+        // Map to min-max range
+        const newValue = min + percentage * (max - min);
+        onChange(newValue);
+    };
+
+    const handleMouseDown = (e) => {
+        e.preventDefault();
+        handleInteraction(e.clientX);
+
+        const onMouseMove = (moveEvent) => {
+            handleInteraction(moveEvent.clientX);
+        };
+
+        const onMouseUp = () => {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
+    };
+
+    // Calculate Styles
+    const range = max - min;
+    const normalized = (value - min) / range; // 0 to 1
+
+    let content = null;
+
+    if (mode === 'handle') {
+        // Handle mode
+    } else {
+        // Fill Mode (Volume): A bar filling from origin
+        let fillWidth = '0%';
+        let fillLeft = '0%';
+
+        if (origin === 'center') {
+            const distanceFromCenter = Math.abs(normalized - 0.5);
+            fillWidth = `${distanceFromCenter * 100}%`;
+            fillLeft = normalized < 0.5 ? `${normalized * 100}%` : '50%';
+        } else {
+            fillWidth = `${normalized * 100}%`;
+            fillLeft = '0%';
+        }
+
+        content = (
+            <div
+                className="horizontal-bar-fill"
+                style={{ width: fillWidth, left: fillLeft }}
+            />
+        );
+    }
+
+    return (
+        <div className={`horizontal-bar-wrapper ${disabled ? 'disabled' : ''}`} title={`${label}: ${Math.round(value * 100) / 100}`}>
+            <span className="slider-label-left">{label}</span>
+            <div
+                className="horizontal-bar-track"
+                ref={barRef}
+                onMouseDown={handleMouseDown}
+            >
+                {mode === 'fill' && (
+                    <div className="bar-track-bg" />
+                )}
+
+                {content}
+            </div>
+        </div>
+    );
+};
+
 const StemRow = ({
     stem,
-    sState = { vol: 0.5, muted: false, solo: false, pan: 0, locked: false },
+    sState = { vol: 0.5, muted: false, solo: false, locked: false },
     audioUrl,
     onUpdate,
     onRemove,
@@ -69,8 +161,9 @@ const StemRow = ({
 }) => {
     const containerRef = useRef(null);
     const wsRef = useRef(null);
-    const pannerRef = useRef(null);
     const [isReady, setIsReady] = useState(false);
+    const stemNameRef = useRef(null);
+    const [shouldScroll, setShouldScroll] = useState(false);
 
     const isUnified = stem.includes('.unified');
 
@@ -81,6 +174,59 @@ const StemRow = ({
     };
     const format = getFileFormat(stem);
 
+    // Detect if text overflows container
+    useEffect(() => {
+        if (!stemNameRef.current || !visible) return;
+
+        const checkOverflow = () => {
+            const container = stemNameRef.current;
+            if (!container) return;
+
+            const scrollContent = container.querySelector('.stem-name-scroll');
+            if (!scrollContent) return;
+
+            // Measure content width
+            const containerWidth = container.offsetWidth;
+            const contentWidth = scrollContent.scrollWidth;
+
+            // Skip if layout hasn't been calculated yet
+            if (containerWidth === 0) {
+                return;
+            }
+
+            const needsScroll = contentWidth > containerWidth + 5; // Add 5px threshold
+
+            setShouldScroll(needsScroll);
+
+            // Calculate animation duration for consistent speed
+            // Speed: 30 pixels per second
+            if (needsScroll && scrollContent) {
+                const pixelsPerSecond = 30;
+                // The distance to scroll is exactly half the content width
+                // This makes the duplicate appear seamlessly as the original disappears
+                const distance = contentWidth / 2;
+                const duration = distance / pixelsPerSecond;
+                scrollContent.style.animationDuration = `${duration}s`;
+            }
+        };
+
+        // Check multiple times with increasing delays to catch when layout is ready
+        // More attempts for dynamically added stems
+        const timeout1 = setTimeout(checkOverflow, 50);
+        const timeout2 = setTimeout(checkOverflow, 150);
+        const timeout3 = setTimeout(checkOverflow, 300);
+        const timeout4 = setTimeout(checkOverflow, 600);
+        const timeout5 = setTimeout(checkOverflow, 1000);
+
+        return () => {
+            clearTimeout(timeout1);
+            clearTimeout(timeout2);
+            clearTimeout(timeout3);
+            clearTimeout(timeout4);
+            clearTimeout(timeout5);
+        };
+    }, [stem, isReady, visible]); // Check when stem, waveform ready state, or visibility changes
+
     useEffect(() => {
         if (!audioUrl || !containerRef.current || !audioContext) return;
 
@@ -89,12 +235,7 @@ const StemRow = ({
 
         const initWaveSurfer = async () => {
             try {
-                // Check abortion before starting
                 if (abortController.signal.aborted) return;
-
-                // Initialize WaveSurfer
-                const panner = audioContext.createStereoPanner();
-                pannerRef.current = panner;
 
                 ws = WaveSurfer.create({
                     container: containerRef.current,
@@ -110,7 +251,6 @@ const StemRow = ({
                     cursorWidth: 0,
                     cursorColor: 'transparent',
                     audioContext: audioContext,
-                    audioNodes: [panner]
                 });
 
                 wsRef.current = ws;
@@ -121,7 +261,6 @@ const StemRow = ({
 
                     setIsReady(true);
                     ws.setVolume(sState?.muted ? 0 : (sState?.vol ?? 0.5));
-                    panner.pan.setValueAtTime(sState?.pan ?? 0, audioContext.currentTime);
                     registerWaveSurfer(stem, ws);
                 });
 
@@ -207,15 +346,13 @@ const StemRow = ({
         };
     }, [audioUrl, stem, audioContext]);
 
-    // Handle State Updates (Vol, Mute, Pan)
+    // Handle State Updates (Vol, Mute)
     useEffect(() => {
         if (!wsRef.current) return;
         const vol = sState?.vol ?? 0.5;
         const muted = sState?.muted ?? false;
         wsRef.current.setVolume(muted ? 0 : vol);
-
-        pannerRef.current.pan.setValueAtTime(sState?.pan, audioContext.currentTime);
-    }, [sState?.vol, sState?.muted, sState?.pan]);
+    }, [sState?.vol, sState?.muted]);
 
     const handleDownload = () => {
         if (onDownload) {
@@ -240,28 +377,18 @@ const StemRow = ({
             e.clientY,
             [
                 {
-                    label: 'Delete',
-                    onClick: () => handleDelete(),
-                    danger: true // Makes the item red
+                    label: 'Hide',
+                    onClick: () => handleHide(),
                 },
                 {
                     label: 'Rename',
                     onClick: () => handleRename()
-                },
-                { separator: true }, // Adds a separator line
-                {
-                    label: 'Properties',
-                    onClick: () => handleProperties(),
-                    disabled: true // Grays out and disables the item
                 }
             ]
         );
     };
 
-    const handleDelete = () => {
-        console.log('Delete clicked');
-        // Your delete logic here
-    };
+
 
     const handleRename = () => {
         console.log('Rename clicked');
@@ -280,52 +407,47 @@ const StemRow = ({
             className={`stem-row ${sState?.muted ? 'is-muted' : ''} ${sState?.locked ? 'is-locked' : ''}`}
             style={{ display: visible ? 'flex' : 'none' }}
         >
-            {/* Left Controls */}
             <div className="stem-controls-left">
-                {/* Row 1: Info */}
-                <div className="stem-row-top">
+
+                <div className="stem-controls-left-top-section">
                     <button
-                        className="btn-icon danger"
+                        className={`icon-btn ${sState?.locked ? 'active' : ''}`}
+                        onClick={handleLockToggle}
+                        title={sState?.locked ? "Unlock" : "Lock"}
+                    >
+                        <LockIcon locked={sState?.locked} />
+                    </button>
+                    <img src={drumIcon} className="stem-type-icon" />
+
+                    <button
+                        className="icon-btn btn-remove"
                         onClick={() => onRemove(stem)}
                         title="Remove from Player"
                         disabled={sState?.locked}
                     >
-                        ←
+                        ✕
                     </button>
-                    <div className="stem-name" title={stem}>
-                        {stem.replace(/\.(wav|mp3|flac)$/, '')}
-                        {isUnified && <span className="tag-unified">U</span>}
-                    </div>
-                    {format && <span className="format-badge">{format}</span>}
-                    <div className="stem-actions">
-                        <button
-                            className="icon-btn"
-                            onClick={handleDownload}
-                            title="Download Stem"
-                            disabled={sState?.locked}
-                        >
-                            <DownloadIcon />
-                        </button>
-                        <button
-                            className={`icon-btn ${sState?.locked ? 'active' : ''}`}
-                            onClick={handleLockToggle}
-                            title={sState?.locked ? "Unlock" : "Lock"}
-                        >
-                            <LockIcon locked={sState?.locked} />
-                        </button>
-                    </div>
                 </div>
 
-                {/* Row 2: Controls */}
-                <div className="stem-row-bottom">
+                <div className="stem-controls-left-middle-section">
                     <button
-                        className={`icon-btn btn-mute ${sState?.muted ? 'active' : ''}`}
+                        className={`icon-btn btn-mute-small ${sState?.muted ? 'active' : ''}`}
                         onClick={() => onUpdate('muted', !sState?.muted)}
                         title={sState?.muted ? "Unmute" : "Mute"}
                         disabled={sState?.locked}
                     >
                         <MuteIcon active={sState?.muted} />
                     </button>
+                    <HorizontalBar
+                        value={sState?.vol ?? 0.5}
+                        min={0}
+                        max={1}
+                        onChange={(val) => onUpdate('vol', val)}
+                        label=""
+                        origin="left"
+                        mode="fill"
+                        disabled={sState?.locked}
+                    />
                     <button
                         className={`icon-btn btn-solo ${sState?.solo ? 'active' : ''}`}
                         onClick={() => onUpdate('solo', !sState?.solo)}
@@ -333,32 +455,45 @@ const StemRow = ({
                         disabled={sState?.locked}
                     >
                         <SoloIcon />
+
                     </button>
-                    <div className="control-group">
-                        <label className="control-label">Vol</label>
-                        <input
-                            className="vol-slider-mini"
-                            type="range" min="0" max="1" step="0.01"
-                            value={sState?.vol ?? 0.5}
-                            onChange={(e) => onUpdate('vol', parseFloat(e.target.value))}
-                            disabled={sState?.locked}
-                        />
+                </div>
+
+                <div className="stem-controls-left-bottom-section">
+                    <button
+                        className="icon-btn"
+                        onClick={handleDownload}
+                        title="Download Stem"
+                        disabled={sState?.locked}
+                    >
+                        <DownloadIcon />
+                    </button>
+                    <div className={`row-stem-name ${shouldScroll ? 'should-scroll' : ''}`} ref={stemNameRef} title={stem}>
+                        <div className="stem-name-scroll">
+                            <span className="stem-name-text">
+                                {stem}
+                                {isUnified && <span className="tag-unified">U</span>}
+                            </span>
+                            {shouldScroll && (
+                                <span className="stem-name-text stem-name-duplicate">
+                                    {stem}
+                                    {isUnified && <span className="tag-unified">U</span>}
+                                </span>
+                            )}
+                        </div>
                     </div>
-                    <div className="control-group">
-                        <label className="control-label">Pan</label>
-                        <input
-                            className="pan-slider"
-                            type="range" min="-1" max="1" step="0.01"
-                            value={sState?.pan ?? 0}
-                            onChange={(e) => onUpdate('pan', parseFloat(e.target.value))}
-                            title={`Pan: ${sState?.pan ?? 0}`}
-                            disabled={sState?.locked}
-                        />
-                    </div>
+                    <button
+                        className="icon-btn"
+                        onClick={(e) => {
+                            handleContextMenu(e);
+                        }}
+                        title="More Options"
+                    >
+                        <MoreIcon />
+                    </button>
                 </div>
             </div>
 
-            {/* Waveform */}
             <div className="waveform-wrapper">
                 <div ref={containerRef} className="waveform-container" />
                 {!isReady && <div className="loading-overlay">Loading Waveform...</div>}

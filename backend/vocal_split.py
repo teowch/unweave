@@ -8,7 +8,7 @@ separator = Separator()
 with open("models.json", "w") as f:
     json.dump(separator.list_supported_model_files(), f, indent=2)
 
-def separate_lead_and_backing(
+def process_lead_and_backing(
     vocals_path: str,
     output_dir: str | None = None,
 ) -> list[str]:

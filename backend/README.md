@@ -47,12 +47,12 @@ The server will start on `http://localhost:5000`.
 
 ### 🎵 Audio Processing
 
-- **`POST /api/separate`**
-    - Upload an audio file to separate.
+- **`POST /api/process`**
+    - Upload an audio file to process.
     - **Body**: `form-data` with `file`.
 
-- **`POST /api/separate-url`**
-    - Download and separate audio from a YouTube URL.
+- **`POST /api/process-url`**
+    - Download and process audio from a YouTube URL.
     - **Body**: JSON `{ "url": "https://youtube.com/..." }`
 
 - **`POST /api/mix`** (Note: Client currently uses `/api/unify` for combining stems)
@@ -83,4 +83,4 @@ The server will start on `http://localhost:5000`.
 
 - **`app.py`**: Main application entry point and logic.
 - **`uploads/`**: (Created at runtime) Stores temporary uploaded raw files.
-- **`output/`**: (Created at runtime) Stores separated audio stems, organized by timestamp and song title.
+- **`output/`**: (Created at runtime) Stores processed audio stems, organized by timestamp and song title.

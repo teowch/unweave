@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
-import axios from 'axios'
+import { getHistory, unifyStems } from './services/api'
 import './App.css'
 
 // Components
@@ -10,8 +10,6 @@ import LibraryView from './components/LibraryView/LibraryView'
 import EditorView from './components/EditorView/EditorView'
 import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
-
-const API_BASE = 'http://127.0.0.1:5000/api'
 
 // Wrapper for EditorView to handle ID from params
 const EditorRoute = ({ library, onUnify, isLoading }) => {
@@ -50,10 +48,10 @@ function App() {
 
   const refreshLibrary = async () => {
     try {
-      const res = await axios.get(`${API_BASE}/history`)
-      setLibrary(res.data)
+      const data = await getHistory()
+      setLibrary(data)
       setLoading(false)
-      return res.data
+      return data
     } catch (err) {
       console.error("Failed to load library", err)
       setLoading(false)
@@ -72,7 +70,7 @@ function App() {
     if (hasUnified) return alert("Cannot unify already unified tracks.")
 
     try {
-      await axios.post(`${API_BASE}/unify`, { id: trackId, tracks: selectedStems })
+      await unifyStems(trackId, selectedStems)
       await refreshLibrary()
       alert("Unification complete!")
     } catch (err) {

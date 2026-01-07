@@ -36,9 +36,9 @@ The user interface for Music Track Separator, built with React and Vite. It prov
 
 ## 🧩 Key Components
 
-- **Upload/URL Input**: Drag & drop support and URL field for initiating separation.
+- **Upload/URL Input**: Drag & drop support and URL field for initiating processing.
 - **Player Modal**: Advanced Multi-track player to toggle stems (Vocals, Drums, Bass, Other), adjust global/individual volume, Unify tracks, and download original/processed files.
-- **History List**: View and access previously separated tracks.
+- **History List**: View and access previously processed tracks.
 - **Unify Tracks**: Select specific stems and merge them into a single track directly in the browser.
 
 ## 📸 Screenshots

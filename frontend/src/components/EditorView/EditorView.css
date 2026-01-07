@@ -38,59 +38,332 @@
     display: flex;
     flex-direction: column;
     flex-shrink: 0;
-}
-
-.browser-header {
-    padding: 1rem;
-    border-bottom: 1px solid var(--border-light);
-    background: #1a1a1a;
-}
-
-.browser-header h3 {
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    color: var(--text-sub);
-    margin: 0;
-}
-
-.browser-list {
-    flex: 1;
     overflow-y: auto;
-    padding: 1rem;
+    /* Allow full browser text to scroll if needed, though lists scroll internally */
+}
+
+/* Browser Sections (Collapsible) */
+.browser-section {
+    border-bottom: 1px solid var(--border-light);
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    background: #141414;
+    flex-shrink: 0;
+    /* Headers don't shrink */
 }
 
-.stem-browser-item {
-    background: var(--bg-panel);
-    border: 1px solid var(--border-light);
-    padding: 0.8rem 1rem;
-    border-radius: 6px;
+.browser-section.original-section {
+    border-bottom: 2px solid #222;
+}
+
+.section-toggle {
     display: flex;
-    justify-content: space-between;
     align-items: center;
-    cursor: grab;
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: #1a1a1a;
+    border: none;
+    color: var(--text-sub);
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: background 0.2s;
+    text-align: left;
+}
+
+.section-toggle:hover {
+    background: #252525;
+    color: var(--text-main);
+}
+
+.section-toggle.expanded {
+    background: #202020;
+    color: var(--text-main);
+}
+
+.toggle-icon {
+    width: 16px;
+    font-size: 0.6rem;
+    opacity: 0.7;
+    margin-right: 4px;
+}
+
+.section-title {
+    flex: 1;
+}
+
+.section-count {
+    font-size: 0.7rem;
+    background: #333;
+    padding: 1px 6px;
+    border-radius: 10px;
+    color: #aaa;
+    margin-left: 8px;
+}
+
+.section-count.in-player-count {
+    background: var(--primary);
+    color: #000;
+    font-weight: bold;
+}
+
+.section-count.completed {
+    background: #388e3c;
+    color: #fff;
+    font-weight: bold;
+}
+
+/* Collapsible Content Loop */
+.collapsible-content {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    background: #111;
+}
+
+.collapsible-content.expanded {
+    grid-template-rows: 1fr;
+}
+
+.collapsible-inner {
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    opacity: 0;
+    transition: opacity 0.2s ease-in-out;
+}
+
+.collapsible-content.expanded .collapsible-inner {
+    opacity: 1;
+    transition-delay: 0.1s;
+    /* Slight delay for content fade in */
+}
+
+/* Lists inside sections */
+.browser-list {
+    padding: 0.5rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+    overflow-y: auto;
+}
+
+/* Stem Item in Browser */
+.stem-browser-item {
+    background: #1a1a1a;
+    border: 1px solid #333;
+    padding: 0.6rem 0.8rem;
+    border-radius: 4px;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.5rem;
     transition: all 0.2s;
 }
 
 .stem-browser-item:hover {
-    border-color: var(--primary);
-    background: var(--bg-hover);
+    border-color: #555;
+    background: #222;
 }
 
-.stem-browser-item:active {
-    cursor: grabbing;
+.stem-browser-item.in-player {
+    border-left: 3px solid var(--primary);
+    background: rgba(var(--primary-rgb), 0.08);
+    /* Fallback or variable */
+}
+
+.stem-browser-item.original-item {
+    border-left: 3px solid #ffb74d;
+    /* Distinct color for original */
+}
+
+.stem-browser-item.is-hidden {
+    opacity: 0.5;
+    background: #0f0f0f;
+    border-style: dashed;
+}
+
+.stem-name,
+.browser-stem-name {
+    width: 100%;
+    font-size: 0.85rem;
+    white-space: normal;
+    word-break: break-all;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #e0e0e0;
+}
+
+/* Stem Actions */
+.stem-item-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    justify-content: flex-start;
+}
+
+.in-player-badge {
+    font-size: 0.6rem;
+    text-transform: uppercase;
+    color: var(--primary);
+    border: 1px solid var(--primary);
+    padding: 1px 4px;
+    border-radius: 3px;
+    margin-right: 4px;
+    font-weight: 700;
+}
+
+.stem-action-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: #666;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 0.85rem;
+    padding: 0;
+}
+
+.stem-action-btn:hover {
+    background: #333;
+    color: #eee;
+}
+
+.stem-action-btn.add-btn {
+    color: var(--primary);
+    background: rgba(var(--primary-rgb), 0.1);
+}
+
+.stem-action-btn.add-btn:hover {
+    background: var(--primary);
+    color: #000;
+}
+
+.stem-action-btn.remove-btn:hover {
+    background: rgba(211, 47, 47, 0.1);
+    color: #d32f2f;
+}
+
+.browser-stem-name {
+    flex: 1;
+    font-size: 0.85rem;
+    white-space: normal;
+    word-break: break-all;
+    line-height: 1.2;
+    padding-right: 0.5rem;
 }
 
 .empty-msg {
-    color: var(--text-sub);
+    color: #555;
     font-style: italic;
-    font-size: 0.9rem;
+    font-size: 0.8rem;
     text-align: center;
-    margin-top: 2rem;
+    padding: 1rem;
 }
+
+/* Process More Section */
+.process-more-section {
+    background: #121212;
+    margin-top: auto;
+    /* Push to bottom if container flex */
+    border-top: 1px solid #333;
+}
+
+.module-selector {
+    padding: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.8rem;
+}
+
+.module-group-label {
+    font-size: 0.7rem;
+    color: #777;
+    text-transform: uppercase;
+    font-weight: 700;
+    margin: 0 0 0.4rem 0;
+}
+
+.module-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+
+.module-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.5rem;
+    background: #1e1e1e;
+    border: 1px solid #333;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.module-option:hover {
+    background: #252525;
+    border-color: #555;
+}
+
+.module-option.completed {
+    opacity: 0.7;
+    background: #181818;
+    cursor: default;
+    border-color: #2e7d32;
+}
+
+.module-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+}
+
+.module-desc {
+    color: #ddd;
+}
+
+.module-dep {
+    font-size: 0.7rem;
+    color: #666;
+    font-style: italic;
+}
+
+.run-modules-btn {
+    width: 100%;
+    margin-top: 0.4rem;
+    padding: 0.6rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.module-error {
+    color: #ff5252;
+    font-size: 0.8rem;
+    padding: 0.5rem;
+    background: rgba(255, 82, 82, 0.1);
+    border-radius: 4px;
+    border: 1px solid rgba(255, 82, 82, 0.2);
+}
+
+.all-done-msg {
+    text-align: center;
+    font-size: 0.8rem;
+    color: #666;
+    font-style: italic;
+    padding: 1rem;
+}
+
 
 /* Player Stage (Right) */
 .player-stage {
@@ -169,8 +442,6 @@
     flex-direction: column;
     position: relative;
     width: 100%;
-    overflow-y: auto;
-    /* List scrolls, header stays */
 }
 
 /* Stem Row (Updated) */
@@ -182,56 +453,122 @@
     border: 1px solid #333;
 }
 
+.stem-type-icon {
+    width: 20px;
+    height: 20px;
+}
+
 .stem-controls-left {
     width: 220px;
     background: #252525;
     padding: 0.5rem;
     display: flex;
     flex-direction: column;
-    gap: 0.5rem;
+    justify-content: space-between;
     border-right: 1px solid #333;
-    flex-shrink: 0;
+    gap: 0.5rem;
 }
 
-/* Two-Row Layout */
-.stem-row-top {
+.stem-controls-left-top-section {
     display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    min-height: 28px;
+    justify-content: space-between;
 }
 
-.stem-row-bottom {
+.stem-controls-left-middle-section {
     display: flex;
+    justify-content: space-between;
     align-items: center;
     gap: 0.4rem;
-    min-height: 28px;
+}
+
+.stem-controls-left-bottom-section {
+    display: flex;
+    justify-content: space-between;
+    align-items: start;
+    gap: 0.4rem;
+}
+
+.btn-mute-small {
+    width: 20px;
+    height: 20px;
+    padding: 2px;
+    border-radius: 3px;
+    border: 1px solid #444;
+    background: #252525;
+    color: #888;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-mute-small:hover {
+    background: #333;
+    color: #fff;
+}
+
+.btn-mute-small.active {
+    background: #d32f2f;
+    color: white;
+    border-color: #d32f2f;
 }
 
 /* Stem Name */
 .stem-name {
     flex: 1;
     font-size: 0.8rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    white-space: normal;
+    word-break: break-all;
     font-weight: 600;
     color: #e0e0e0;
+    padding-right: 0.5rem;
 }
 
-/* Format Badge */
-.format-badge {
-    padding: 0.15rem 0.4rem;
-    background: #1a1a1a;
-    border: 1px solid #444;
-    border-radius: 3px;
-    font-size: 0.65rem;
-    font-weight: 700;
-    color: var(--primary);
-    letter-spacing: 0.5px;
+.row-stem-name {
+    width: 100%;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #e0e0e0;
+    line-height: 1.2;
+    overflow: hidden;
+    position: relative;
 }
 
-/* Stem Actions (Download, Lock) */
+.stem-name-scroll {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    white-space: nowrap;
+}
+
+/* Only animate when hovering over overflowing content */
+.row-stem-name.should-scroll:hover .stem-name-scroll {
+    animation: scroll-text linear infinite;
+}
+
+.stem-name-text {
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+}
+
+/* Add spacing between original and duplicate text */
+.stem-name-duplicate {
+    padding-left: 2rem;
+}
+
+@keyframes scroll-text {
+    from {
+        transform: translateX(0);
+    }
+
+    to {
+        transform: translateX(-50%);
+    }
+}
+
+/* Stem Actions */
 .stem-actions {
     display: flex;
     gap: 0.3rem;
@@ -240,6 +577,8 @@
 
 /* Icon Buttons */
 .icon-btn {
+    /* width: 26px;
+    height: 26px; */
     width: 26px;
     height: 26px;
     display: flex;
@@ -252,6 +591,7 @@
     cursor: pointer;
     transition: all 0.2s;
     padding: 0;
+    flex-shrink: 0;
 }
 
 .icon-btn:hover:not(:disabled) {
@@ -288,6 +628,15 @@
     border-color: var(--primary);
 }
 
+.icon-btn.btn-remove {
+    background-color: #d32f2f;
+    color: white;
+}
+
+.icon-btn.btn-remove:hover {
+    background-color: #c22e2e;
+}
+
 /* Control Groups (Vol, Pan) */
 .control-group {
     flex: 1;
@@ -305,16 +654,14 @@
     font-weight: 600;
 }
 
-.vol-slider-mini,
-.pan-slider {
+.vol-slider-mini {
     width: 100%;
     height: 4px;
     accent-color: var(--primary);
     cursor: pointer;
 }
 
-.vol-slider-mini:disabled,
-.pan-slider:disabled {
+.vol-slider-mini:disabled {
     opacity: 0.4;
     cursor: not-allowed;
 }
@@ -645,4 +992,61 @@
     cursor: grab;
     pointer-events: auto;
     /* Maybe allow grabbing head? */
+}
+
+/* Horizontal Bar (Volume) */
+.volume-control-area {
+    display: flex;
+    flex: 1;
+    align-items: center;
+    padding: 0 1rem;
+}
+
+.horizontal-bar-wrapper {
+    /* flex: 1; */
+    width: 100px;
+    display: flex;
+    align-items: center;
+    height: 30px;
+    position: relative;
+    cursor: pointer;
+    gap: 8px;
+}
+
+/* Label for horizontal bar (left side) */
+.slider-label-left {
+    font-size: 0.65rem;
+    color: #888;
+    font-weight: 700;
+    min-width: 20px;
+    /* or hide if empty */
+    display: none;
+    /* Hide for now as label is empty */
+}
+
+.horizontal-bar-track {
+    flex: 1;
+    height: 6px;
+    background: #000000;
+    border-radius: 3px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    border: 1px solid #333;
+}
+
+.horizontal-bar-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: #888888;
+    border-radius: 3px;
+    z-index: 2;
+    pointer-events: none;
+}
+
+.horizontal-bar-wrapper.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
 }

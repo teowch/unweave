@@ -13,12 +13,12 @@ The system is built as a full-stack application:
 
 ## ✨ Features
 
-- **Upload & Separate**: Support for `.wav`, `.mp3`, `.ogg`, `.flac`.
-- **YouTube Integration**: separate audio directly from YouTube links.
+- **Upload & Process**: Support for `.wav`, `.mp3`, `.ogg`, `.flac`.
+- **YouTube Integration**: Process audio directly from YouTube links.
 - **Stem Player**: Listen to individual isolated tracks.
 - **Mixer**: Create custom mixes by combining specific stems.
 - **Unify Tracks**: Combine multiple selected stems into a new single track for download or listening.
-- **Download**: Export individual stems, the original file, a custom selection as ZIP, or the full separated package.
+- **Download**: Export individual stems, the original file, a custom selection as ZIP, or the full processed package.
 - **Global Volume**: Control master volume alongside individual stem volumes.
 - **History**: Access previously processed tracks.
 

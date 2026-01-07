@@ -3,8 +3,4 @@
 Containerize the backend.
 - REMOVE static_ffmpeg
 
-Improve the UI.
-
-Add more features.
-
-Improve the documentation.
+Create a CLI tool to interact with the API.

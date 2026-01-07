@@ -16,46 +16,29 @@ import soundfile as sf
 import static_ffmpeg
 static_ffmpeg.add_paths()
 
-# Import AudioProcessor
+# Import audio processing modules
+from modules import MODULE_REGISTRY, validate_modules
+from AudioProject import AudioProject
 from AudioProcessor import AudioProcessor
+
+# Keep WORKFLOW_MAP alias for backward compatibility in this file
+WORKFLOW_MAP = MODULE_REGISTRY
 
 app = Flask(__name__)
 CORS(app)
 
-# ==========================================
-# CONSTANTS & CONFIG
-# ==========================================
-# ==========================================
-# CONSTANTS & CONFIG
-# ==========================================
-# Use "Library" folder at the project root (level up from backend if running from backend)
-# The user wants "Library" on root. 
-# Current working directory when running `python api.py` is usually `e:\dev\track-splitter\backend`
-# So project root is `..`.
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
-# However, if user runs from root, we need to be careful.
-# Let's assume Library is sibling to backend folder structure-wise or just at project root.
-# Construct path relative to this file to be safe.
 LIBRARY_FOLDER = os.path.join(PROJECT_ROOT, 'Library')
 
 UPLOAD_FOLDER = os.path.abspath('uploads')
-# OUTPUT_FOLDER is now LIBRARY_FOLDER for history scanning
 OUTPUT_FOLDER = LIBRARY_FOLDER 
 
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# ==========================================
-# IN-MEMORY STATE (Session History)
-# ==========================================
-# Maps folder_id -> { 'path': absolute_path_to_temp_dir, 'metadata': track_data_obj }
 TRACK_SESSIONS = {}
 SESSION_HISTORY = []
-
-# ==========================================
-# HELPER FUNCTIONS
-# ==========================================
 
 def load_history_from_disk():
     """Scans OUTPUT_FOLDER (Library) and populates SESSION_HISTORY and TRACK_SESSIONS."""
@@ -63,7 +46,6 @@ def load_history_from_disk():
     if not os.path.exists(OUTPUT_FOLDER):
         return
 
-    # Clear existing to avoid duplicates if called multiple times (though mainly for startup)
     global SESSION_HISTORY
     SESSION_HISTORY = []
     
@@ -72,13 +54,12 @@ def load_history_from_disk():
         folder_path = os.path.join(OUTPUT_FOLDER, folder_name)
         if os.path.isdir(folder_path):
             try:
-                # Try to read metadata.json
                 metadata_path = os.path.join(folder_path, 'metadata.json')
                 
                 track_id = folder_name
                 track_name = folder_name
                 original_file = None
-                track_date = folder_name # Default date is ID (legacy timestamp behavior)
+                track_date = folder_name
                 
                 if os.path.exists(metadata_path):
                     try:
@@ -92,17 +73,12 @@ def load_history_from_disk():
                     except Exception as e:
                         print(f"Error reading metadata for {folder_name}: {e}")
                 
-                # Scan stems
                 stems_list = []
                 
-                # Let's list all audio files
                 all_audio = []
                 for f in os.listdir(folder_path):
                     if f.endswith('.wav') or f.endswith('.mp3') or f.endswith('.flac'):
                         all_audio.append(f)
-                
-                # If we don't have original_file from metadata, try to guess or just leave it
-                # If we know original_file, exclude it from stems
                 
                 for f in all_audio:
                     if original_file and f == original_file: continue
@@ -121,7 +97,6 @@ def load_history_from_disk():
 
                 found_folders.append(track_data)
                 
-                # Register in TRACK_SESSIONS so downloads work
                 TRACK_SESSIONS[track_id] = {
                     'path': folder_path,
                     'original': original_file
@@ -131,7 +106,6 @@ def load_history_from_disk():
                 print(f"Error loading {folder_name}: {e}")
                 continue
 
-    # Sort by date desc
     found_folders.sort(key=lambda x: x['id'], reverse=True)
     SESSION_HISTORY.extend(found_folders)
     print(f"Loaded {len(found_folders)} tracks from disk.")
@@ -151,15 +125,6 @@ def get_track_data(folder_id, name, timestamp, absolute_path):
     if os.path.exists(absolute_path):
         for f in os.listdir(absolute_path):
             if f.endswith('.wav') or f.endswith('.mp3'):
-                # Try to identify original
-                # In AudioProcessor, inputs are not necessarily copied to output unless we do it.
-                # But we should handle 'original' logic.
-                
-                # Check if this file is the original
-                # Heuristic: matches name? 
-                
-                # We will explicitly track original filename in metadata if possible.
-                # For now, just list everything.
                 stems.append({
                     'name': f,
                     'url': f'/api/download/{folder_id}/{f}'
@@ -176,19 +141,29 @@ def get_track_data(folder_id, name, timestamp, absolute_path):
     }
 
 def sort_stems(stems):
-    # Basic sorting
     return sorted(stems, key=lambda x: x['name'])
-
-# ==========================================
-# ROUTES
-# ==========================================
 
 @app.route('/api/history', methods=['GET'])
 def list_history():
     # Return the in-memory history list
-    return jsonify(SESSION_HISTORY)
+    return jsonify(SESSION_HISTORY), 200
 
-def process_track_separation(folder_id, output_folder, filename, timestamp):
+@app.route('/api/modules', methods=['GET'])
+def get_modules():
+    """
+    Returns available processing modules with descriptions and hierarchy.
+    """
+    modules = []
+    for module_id, config in WORKFLOW_MAP.items():
+        modules.append({
+            'id': module_id,
+            'description': config.get('description', ''),
+            'category': config.get('category', 'Uncategorized'),
+            'depends_on': config.get('depends_on')
+        })
+    return jsonify({'modules': modules}), 200
+
+def process_track_separation(folder_id, output_folder, filename, timestamp, modules_to_run):
     """
     Common logic for processing a track after the original file has been placed in the output_folder.
     """
@@ -196,12 +171,15 @@ def process_track_separation(folder_id, output_folder, filename, timestamp):
         filename_no_ext = os.path.splitext(filename)[0]
         original_file_path = os.path.join(output_folder, filename)
 
-        # Initialize AudioProcessor
-        processor = AudioProcessor(base_library=LIBRARY_FOLDER)
+        # Create or load project and run modules
+        project = AudioProject.load_or_create(
+            audio_file=original_file_path,
+            project_id=folder_id,
+            base_library=LIBRARY_FOLDER
+        )
         
-        # Run Separation Logic
-        modules_to_run = ["vocal_instrumental", "lead_backing", "male_female", "male_female_secondary", "htdemucs_6s"]
-        processor.process(original_file_path, modules_to_run, project_id=folder_id)
+        processor = AudioProcessor()
+        project.run_modules(modules_to_run, processor)
         
         # Save metadata.json
         metadata_path = os.path.join(output_folder, 'metadata.json')
@@ -251,26 +229,43 @@ def process_track_separation(folder_id, output_folder, filename, timestamp):
         # Prepend to history
         SESSION_HISTORY.insert(0, track_data)
         
-        resp_stems = [{'name': s, 'url': f'/api/download/{folder_id}/{s}'} for s in stems_list]
-
         return jsonify({
             'message': 'Separation successful',
             'id': folder_id,
-            'stems': resp_stems 
-        })
+            'stems': stems_list 
+        }), 200
     except Exception as e:
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
 
-@app.route('/api/separate', methods=['POST'])
-def separate_audio():
+@app.route('/api/process', methods=['POST'])
+def process_audio():
+    # Check for file in request
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
+    
+    # Get modules from form data
+    modules_json = request.form.get('modules')
+    if not modules_json:
+        return jsonify({'error': 'modules field is required'}), 400
+    
+    try:
+        modules_to_run = json.loads(modules_json)
+    except json.JSONDecodeError:
+        return jsonify({'error': 'modules must be valid JSON array'}), 400
+    
+    if not isinstance(modules_to_run, list) or len(modules_to_run) == 0:
+        return jsonify({'error': 'modules must be a non-empty array'}), 400
+    
+    # Validate module names
+    invalid_modules = [m for m in modules_to_run if m not in WORKFLOW_MAP]
+    if invalid_modules:
+        return jsonify({'error': f'Invalid modules: {invalid_modules}. Valid modules: {list(WORKFLOW_MAP.keys())}'}), 400
         
     if file and allowed_file(file.filename):
         try:
@@ -290,7 +285,7 @@ def separate_audio():
             original_file_path = os.path.join(output_folder, filename)
             file.save(original_file_path)
             
-            return process_track_separation(folder_id, output_folder, filename, timestamp)
+            return process_track_separation(folder_id, output_folder, filename, timestamp, modules_to_run)
 
         except Exception as e:
             import traceback
@@ -299,12 +294,22 @@ def separate_audio():
             
     return jsonify({'error': 'Invalid file type'}), 400
 
-@app.route('/api/separate-url', methods=['POST'])
-def separate_url():
+@app.route('/api/process-url', methods=['POST'])
+def process_url():
     data = request.json
     url = data.get('url')
     if not url:
         return jsonify({'error': 'No URL provided'}), 400
+    
+    # Get and validate modules
+    modules_to_run = data.get('modules')
+    if not modules_to_run or not isinstance(modules_to_run, list) or len(modules_to_run) == 0:
+        return jsonify({'error': 'modules field is required and must be a non-empty array'}), 400
+    
+    # Validate module names
+    invalid_modules = [m for m in modules_to_run if m not in WORKFLOW_MAP]
+    if invalid_modules:
+        return jsonify({'error': f'Invalid modules: {invalid_modules}. Valid modules: {list(WORKFLOW_MAP.keys())}'}), 400
         
     try:
         # 1. Download (Reuse logic from app.py)
@@ -346,8 +351,101 @@ def separate_url():
         persistent_filepath = os.path.join(output_folder, filename)
         shutil.move(downloaded_filepath, persistent_filepath)
 
-        return process_track_separation(folder_id, output_folder, filename, timestamp)
+        return process_track_separation(folder_id, output_folder, filename, timestamp, modules_to_run)
 
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/project/<project_id>/status', methods=['GET'])
+def get_project_status(project_id):
+    """
+    Get project status including executed modules.
+    """
+    # Check if project exists
+    project_folder = os.path.join(LIBRARY_FOLDER, project_id)
+    if not os.path.exists(project_folder):
+        return jsonify({'error': 'Project not found'}), 404
+    
+    try:
+        project = AudioProject.load(project_id, base_library=LIBRARY_FOLDER)
+        
+        return jsonify({
+            'id': project_id,
+            'executed_modules': project.get_executed_modules(),
+            'original_file': project.get_original_file()
+        }), 200
+        
+    except FileNotFoundError:
+        return jsonify({'error': 'Project not found'}), 404
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/project/<project_id>/run-modules', methods=['POST'])
+def run_additional_modules(project_id):
+    """
+    Run additional modules on an existing project.
+    Handles dependency resolution automatically.
+    """
+    data = request.json or {}
+    modules_to_run = data.get('modules', [])
+    
+    # Validate request
+    if not modules_to_run or not isinstance(modules_to_run, list):
+        return jsonify({'error': 'modules must be a non-empty array'}), 400
+    
+    # Validate module names
+    invalid_modules = validate_modules(modules_to_run)
+    if invalid_modules:
+        return jsonify({
+            'error': f'Invalid modules: {invalid_modules}. Valid modules: {list(WORKFLOW_MAP.keys())}'
+        }), 400
+    
+    # Check if project exists
+    if project_id not in TRACK_SESSIONS:
+        # Try to load from disk
+        project_folder = os.path.join(LIBRARY_FOLDER, project_id)
+        if not os.path.exists(project_folder):
+            return jsonify({'error': 'Project not found'}), 404
+    
+    try:
+        # Load project and run modules
+        project = AudioProject.load(project_id, base_library=LIBRARY_FOLDER)
+        processor = AudioProcessor()
+        project.run_modules(modules_to_run, processor)
+        
+        # Get updated stems list
+        session_folder = os.path.join(LIBRARY_FOLDER, project_id)
+        stems_list = []
+        for f in os.listdir(session_folder):
+            if f == 'metadata.json':
+                continue
+            if f.endswith('.wav') or f.endswith('.mp3') or f.endswith('.flac'):
+                # Skip original file if known
+                session_data = TRACK_SESSIONS.get(project_id, {})
+                if f != session_data.get('original'):
+                    stems_list.append(f)
+        
+        stems_list = sorted(stems_list)
+        
+        # Update SESSION_HISTORY with new stems
+        for track in SESSION_HISTORY:
+            if track['id'] == project_id:
+                track['stems'] = stems_list
+                break
+        
+        return jsonify({
+            'message': 'Modules processed successfully',
+            'id': project_id,
+            'executed_modules': project.get_executed_modules(),
+            'stems': stems_list
+        }), 200
+        
+    except FileNotFoundError:
+        return jsonify({'error': 'Project not found'}), 404
     except Exception as e:
         import traceback
         traceback.print_exc()
@@ -361,7 +459,7 @@ def download_file(folder_id, filename):
         return jsonify({'error': 'Track session expired or not found'}), 404
     
     directory = TRACK_SESSIONS[folder_id]['path']
-    return send_from_directory(directory, filename, as_attachment=True)
+    return send_from_directory(directory, filename, as_attachment=False)
 
 @app.route('/api/unify', methods=['POST'])
 def unify_tracks():
@@ -461,7 +559,7 @@ def unify_tracks():
                     item['stems'] = sorted(item['stems'])
                 break
 
-        return jsonify({'message': 'Unify successful', 'new_track': new_stem_name})
+        return jsonify({'message': 'Unify successful', 'new_track': new_stem_name}), 200
 
     except Exception as e:
         if os.path.exists(output_path):
@@ -485,7 +583,7 @@ def download_zip(folder_id):
             for root, dirs, files in os.walk(directory):
                 for file in files:
                     zipf.write(os.path.join(root, file), file)
-        return send_file(zip_path, as_attachment=True)
+        return send_file(zip_path, as_attachment=True), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -508,9 +606,39 @@ def download_zip_selected():
                 p = os.path.join(directory, name)
                 if os.path.exists(p):
                     zipf.write(p, name)
-        return send_file(zip_path, as_attachment=True)
+        return send_file(zip_path, as_attachment=True), 200
     except Exception as e:
          return jsonify({'error': str(e)}), 500
+
+@app.route('/api/delete/<folder_id>', methods=['DELETE'])
+def delete_session(folder_id):
+    if folder_id not in TRACK_SESSIONS:
+        return jsonify({'error': 'Session not found'}), 404
+    
+    directory = TRACK_SESSIONS[folder_id]['path']
+    
+    # Security: Ensure the path is within LIBRARY_FOLDER
+    try:
+        resolved_directory = os.path.realpath(directory)
+        resolved_library = os.path.realpath(LIBRARY_FOLDER)
+        
+        if not resolved_directory.startswith(resolved_library):
+            return jsonify({'error': 'Access denied: path outside library folder'}), 403
+    except Exception as e:
+        return jsonify({'error': 'Invalid path'}), 400
+    
+    try:
+        shutil.rmtree(directory)
+        del TRACK_SESSIONS[folder_id]
+        
+        # Remove from SESSION_HISTORY
+        SESSION_HISTORY[:] = [track for track in SESSION_HISTORY if track['id'] != folder_id]
+        
+        return jsonify({'message': 'Session deleted successfully'}), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
 
 if __name__ == '__main__':
     load_history_from_disk()
