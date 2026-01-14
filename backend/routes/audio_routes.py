@@ -1,9 +1,13 @@
 from flask import Blueprint, jsonify, request
-from services.container import audio_service, project_service, file_service
+from services.container import audio_service, project_service, file_service, sse_manager
+from services.SSEMessageHandler import SSEMessageHandler
 from modules import MODULE_REGISTRY, validate_modules
+from services.SSEManager import useSSEManager
+import json
 from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
+from utils.sanitize import get_ascii_prefix, sanitize_filename
 
 audio_bp = Blueprint('audio', __name__)
 
@@ -24,7 +28,6 @@ def get_modules():
 
 @audio_bp.route('/process', methods=['POST'])
 def process_audio():
-    import json
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
     
@@ -35,6 +38,10 @@ def process_audio():
     modules_json = request.form.get('modules')
     if not modules_json:
         return jsonify({'error': 'modules field is required'}), 400
+    
+    temp_project_id = request.form.get('temp_project_id')
+    if not temp_project_id:
+        return jsonify({'error': 'temp_project_id field is required'}), 400
         
     try:
         modules_to_run = json.loads(modules_json)
@@ -44,81 +51,74 @@ def process_audio():
     invalid = validate_modules(modules_to_run)
     if invalid:
         return jsonify({'error': f'Invalid modules: {invalid}'}), 400
+    
+    with useSSEManager(sse_manager, temp_project_id) as (_sse_manager, state):
+        sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
 
-    filename = secure_filename(file.filename)
-    filename_no_ext = os.path.splitext(filename)[0]
-    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    folder_id = f"{timestamp}_{filename_no_ext[0:2]}" 
-    
-    # Create folder and save file
-    # We must do this before calling AudioService because AudioService expects file to exist?
-    # Actually AudioService logic in 'process_separation' expects the file in the project folder.
-    
-    output_folder = project_service.create_project_folder(folder_id)
-    original_path = os.path.join(output_folder, filename)
-    file.save(original_path)
-    
-    try:
-        result = audio_service.process_separation(folder_id, filename, modules_to_run)
-        return jsonify(result), 200
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return jsonify({'error': str(e)}), 500
+        filename = sanitize_filename(secure_filename(file.filename))
+        filename_no_ext = os.path.splitext(filename)[0]
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}" 
+        
+        output_folder = project_service.create_project_folder(project_id)
+        original_path = os.path.join(output_folder, filename)
+        file.save(original_path)
+        
+        # Update project ID and notify frontend
+        state["job_id"] = project_id
+        sse_message_handler.set_project_id(project_id)
+        
+        try:
+            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler)
+            return jsonify(result), 200
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return jsonify({'error': str(e)}), 500
 
 @audio_bp.route('/process-url', methods=['POST'])
 def process_url():
     data = request.json
     url = data.get('url')
     modules_to_run = data.get('modules', [])
+    temp_project_id = data.get('temp_project_id')
     
     if not url: return jsonify({'error': 'No URL provided'}), 400
     if not modules_to_run: return jsonify({'error': 'modules required'}), 400
+    if not temp_project_id: return jsonify({'error': 'temp_project_id required'}), 400
     
     # Validations...
     
     try:
-        import yt_dlp
-        
-        # We need a temp folder for download before moving to project folder, 
-        # OR we create project folder after download.
-        # Let's use upload folder from FileService as temp
-        
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': os.path.join(file_service.upload_folder, '%(title)s.%(ext)s'),
-            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'wav','preferredquality': '192'}],
-            'prefer_ffmpeg': True,
-            'keepvideo': False,
-            'quiet': True
-        }
-        
-        filename = None
-        downloaded_filepath = None
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            temp_name = ydl.prepare_filename(info)
-            base, _ = os.path.splitext(temp_name)
-            downloaded_filepath = base + ".wav" 
-            filename = os.path.basename(downloaded_filepath)
+        with useSSEManager(sse_manager, temp_project_id) as (_sse_manager, state):
 
-        if not os.path.exists(downloaded_filepath):
-             return jsonify({'error': 'Download failed'}), 500
+            sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
 
-        # Create Project
-        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        filename_no_ext = os.path.splitext(filename)[0]
-        folder_id = f"{timestamp}_{filename_no_ext[0:2]}"
-        
-        output_folder = project_service.create_project_folder(folder_id)
-        persistent_filepath = os.path.join(output_folder, filename)
-        
-        import shutil
-        shutil.move(downloaded_filepath, persistent_filepath)
-        
-        result = audio_service.process_separation(folder_id, filename, modules_to_run)
-        return jsonify(result), 200
+            downloaded_filepath, original_filename = audio_service.download_url(url, sse_message_handler)
+            
+            # Sanitize filename from URL download
+            filename = sanitize_filename(original_filename)
+            if filename != original_filename:
+                # Rename the downloaded file to the sanitized name
+                new_downloaded_filepath = os.path.join(os.path.dirname(downloaded_filepath), filename)
+                os.rename(downloaded_filepath, new_downloaded_filepath)
+                downloaded_filepath = new_downloaded_filepath
+
+            # Create Project
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            filename_no_ext = os.path.splitext(filename)[0]
+            project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}"
+            state["job_id"] = project_id
+            sse_message_handler.set_project_id(project_id)
+            
+            output_folder = project_service.create_project_folder(project_id)
+            persistent_filepath = os.path.join(output_folder, filename)
+            
+            import shutil
+            shutil.move(downloaded_filepath, persistent_filepath)
+            
+            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler)
+            return jsonify(result), 200
 
     except Exception as e:
         import traceback
@@ -152,21 +152,23 @@ def run_additional_modules(project_id):
          return jsonify({'error': 'Original file unknown'}), 500
          
     try:
-        result = audio_service.process_separation(project_id, filename, modules_to_run)
-         # Note: process_separation does "load_or_create" AudioProject, runs modules, and updates metadata.
-         # It effectively handles "run additional" too because AudioProject skips completed modules.
-        return jsonify(result), 200
+        with useSSEManager(sse_manager, project_id) as (_sse_manager, state):
+            sse_message_handler = SSEMessageHandler(project_id, _sse_manager)
+            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler)
+            # Note: process_separation does "load_or_create" AudioProject, runs modules, and updates metadata.
+            # It effectively handles "run additional" too because AudioProject skips completed modules.
+            return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
 @audio_bp.route('/unify', methods=['POST'])
 def unify_tracks():
     data = request.json
-    folder_id = data.get('id')
+    project_id = data.get('id')
     track_names = data.get('tracks')
     
     try:
-        new_track = audio_service.unify_tracks(folder_id, track_names)
+        new_track = audio_service.unify_tracks(project_id, track_names)
         return jsonify({'message': 'Unify successful', 'new_track': new_track}), 200
     except Exception as e:
         import traceback

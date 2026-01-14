@@ -10,3 +10,4 @@ torchaudio==2.6.0
 torchvision==0.21.0
 audio-separator[gpu]
 static_ffmpeg
+flask-sse

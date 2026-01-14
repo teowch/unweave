@@ -1,7 +1,10 @@
+from .log_interceptor import intercept
+from .SSEMessageHandler import SSEMessageHandler
 import os
 import json
 import logging
 import numpy as np
+import yt_dlp
 import soundfile as sf
 from datetime import datetime
 from typing import List, Dict, Any, Optional
@@ -15,11 +18,12 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class AudioService:
-    def __init__(self, project_service):
+    def __init__(self, project_service, file_service):
         self.project_service = project_service
+        self.file_service = file_service
         self.processor = AudioProcessor()
 
-    def process_separation(self, project_id: str, filename: str, modules_to_run: List[str]) -> Dict[str, Any]:
+    def process_separation(self, project_id: str, filename: str, modules_to_run: List[str], sse_message_handler: SSEMessageHandler) -> Dict[str, Any]:
         """
         Runs the separation process for a project.
         """
@@ -38,7 +42,7 @@ class AudioService:
         )
 
         # Run Modules
-        project.run_modules(modules_to_run, self.processor)
+        project.run_modules(modules_to_run, self.processor, sse_message_handler)
 
         # Save/Update Metadata
         metadata_path = os.path.join(output_folder, 'metadata.json')
@@ -81,6 +85,43 @@ class AudioService:
             'stems': stems_list,
             'executed_modules': project.get_executed_modules()
         }
+    
+    def download_url(self, url, sse_message_handler: SSEMessageHandler):
+        
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': os.path.join('uploads', '%(title)s.%(ext)s'),
+            'postprocessors': [{'key': 'FFmpegExtractAudio','preferredcodec': 'wav','preferredquality': '192'}],
+            'prefer_ffmpeg': True,
+            'keepvideo': False,
+            'quiet': True,
+            'no_warnings': True,
+            'noprogress': True,
+            'no_color': True,
+            'progress_hooks': [sse_message_handler.download_callback],
+        }
+        
+        filename = None
+        downloaded_filepath = None
+        
+        sse_message_handler.set_module('download')
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            try:
+                info = ydl.extract_info(url, download=True)
+                temp_name = ydl.prepare_filename(info)
+                base, _ = os.path.splitext(temp_name)
+                downloaded_filepath = base + ".wav" 
+                filename = os.path.basename(downloaded_filepath)
+            except Exception as e:
+                sse_message_handler.send_error(f"Failed to download URL: {e}")
+                raise Exception(f"Failed to download URL: {e}")
+            
+
+        if not os.path.exists(downloaded_filepath):
+             raise Exception("Download failed")
+
+        return downloaded_filepath, filename
+
 
     def unify_tracks(self, project_id: str, track_names: List[str]) -> str:
         """
