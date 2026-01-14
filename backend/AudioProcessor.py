@@ -2,9 +2,10 @@
 AudioProcessor: Stateless executor for audio separation modules.
 Handles the actual audio processing using the audio-separator library.
 """
+from services.log_interceptor import intercept
 import os
 import logging
-from typing import Dict, Optional
+from typing import Dict, Optional, Callable
 
 from audio_separator.separator import Separator
 from modules import MODULE_REGISTRY, get_module
@@ -36,7 +37,8 @@ class AudioProcessor:
         self, 
         module_name: str, 
         input_path: str, 
-        output_dir: str
+        output_dir: str,
+        interceptor_callback: Optional[Callable[[str], None]] = None
     ) -> Dict[str, str]:
         """
         Executes a single module separation.
@@ -65,10 +67,11 @@ class AudioProcessor:
         
         # Run separation
         logger.info(f"Processing module: {module_name}...")
-        self.separator.separate(
-            input_path,
-            custom_output_names=config["custom_output_names"]
-        )
+        with intercept(interceptor_callback):
+            self.separator.separate(
+                input_path,
+                custom_output_names=config["custom_output_names"]
+            )
         
         # Map and return output paths
         outputs = {}

@@ -1,6 +1,7 @@
 from .ProjectService import ProjectService
 from .AudioService import AudioService
 from .FileService import FileService
+from .SSEManager import SSEManager
 import os
 
 # Configuration (Could be moved to config.py)
@@ -10,6 +11,7 @@ LIBRARY_FOLDER = os.path.join(PROJECT_ROOT, 'Library')
 UPLOAD_FOLDER = os.path.abspath(os.path.join(BASE_DIR, 'uploads'))
 
 # Initialize Services
+sse_manager = SSEManager()
 project_service = ProjectService(LIBRARY_FOLDER)
-audio_service = AudioService(project_service)
 file_service = FileService(project_service, UPLOAD_FOLDER)
+audio_service = AudioService(project_service, file_service)

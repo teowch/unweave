@@ -235,7 +235,7 @@ class AudioProject:
         self._save_state()
         logger.info(f"Recorded result for module '{module_name}'")
     
-    def run_module(self, module_name: str, processor: "AudioProcessor") -> Dict[str, str]:
+    def run_module(self, module_name: str, processor: "AudioProcessor", sse_message_handler: "SSEMessageHandler") -> Dict[str, str]:
         """
         Runs a single module with automatic dependency resolution.
         
@@ -246,8 +246,10 @@ class AudioProject:
         Returns:
             Mapping of stem_key -> output_filepath
         """
+        sse_message_handler.set_module(module_name)
         # Check if already completed
         if self.is_module_completed(module_name):
+            sse_message_handler.send_module_completed()
             logger.info(f"Module '{module_name}' already completed. Skipping.")
             return self.state["results"][module_name]["outputs"]
         
@@ -259,7 +261,8 @@ class AudioProject:
         parent_module = config.get("depends_on")
         if parent_module and not self.is_module_completed(parent_module):
             logger.info(f"Resolving dependency: '{module_name}' needs '{parent_module}'")
-            self.run_module(parent_module, processor)
+            sse_message_handler.send_resolving_dependency(parent_module)
+            self.run_module(parent_module, processor, sse_message_handler)
         
         # Get input path
         input_path = self.get_module_input(module_name)
@@ -269,7 +272,8 @@ class AudioProject:
         outputs = processor.execute_module(
             module_name=module_name,
             input_path=input_path,
-            output_dir=self.session_folder
+            output_dir=self.session_folder,
+            interceptor_callback=sse_message_handler.interceptor_callback,
         )
         
         # Record result
@@ -282,7 +286,7 @@ class AudioProject:
         
         return outputs
     
-    def run_modules(self, modules: List[str], processor: "AudioProcessor") -> Dict[str, Any]:
+    def run_modules(self, modules: List[str], processor: "AudioProcessor", sse_message_handler: "SSEMessageHandler") -> Dict[str, Any]:
         """
         Runs multiple modules, resolving dependencies automatically.
         
@@ -299,7 +303,7 @@ class AudioProject:
                 continue
             
             try:
-                self.run_module(module_name, processor)
+                self.run_module(module_name, processor, sse_message_handler)
             except Exception as e:
                 logger.error(f"Error processing module '{module_name}': {e}")
                 # Continue with other modules if one fails
