@@ -20,15 +20,14 @@ class SSEManager:
     def publish(self, job_id: str, event: str, data: dict) -> None:
         with self._lock:
             q = self._channels.get(job_id)
-        if not q:
-            return  # or raise if you want strict behavior
-        q.put({"event": event, "data": data})
+            if q:
+                q.put({"event": event, "data": data})
 
     def close(self, job_id: str) -> None:
         with self._lock:
             q = self._channels.get(job_id)
-        if q:
-            q.put(None)  # sentinel to stop generator
+            if q:
+                q.put(None)  # sentinel to stop generator
 
     def subscribe(self, job_id: str, heartbeat_seconds: int = 15) -> Generator[str, None, None]:
         with self._lock:

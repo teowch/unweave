@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { processFile, processUrl, getModules } from '../../services/api';
+import { createSSEConnection } from '../../services/sse';
+import ProgressBar from '../common/ProgressBar';
 import './UploadView.css';
 
 const UploadView = ({ onUploadSuccess }) => {
@@ -15,6 +17,14 @@ const UploadView = ({ onUploadSuccess }) => {
     // Module selection state
     const [modules, setModules] = useState([]);
     const [selectedModules, setSelectedModules] = useState(new Set());
+
+    // SSE and progress state
+    const sseRef = useRef(null);
+    const finalProjectIdRef = useRef(null);
+    const [downloadProgress, setDownloadProgress] = useState(null); // { percentage, status }
+    const [modelDownloading, setModelDownloading] = useState(null); // { model, status, progress }
+    const [moduleProgress, setModuleProgress] = useState({}); // { moduleId: { percentage, status, dependencyName } }
+
 
     // Fetch modules on mount
     useEffect(() => {
@@ -32,9 +42,18 @@ const UploadView = ({ onUploadSuccess }) => {
         fetchModules();
     }, []);
 
+    // Cleanup SSE on unmount
+    useEffect(() => {
+        return () => {
+            if (sseRef.current) {
+                sseRef.current.close();
+            }
+        };
+    }, []);
+
     // Get all children of a module
     const getChildren = (moduleId) => {
-        return modules.filter(m => m.depends_on === moduleId).map(m => m.id);
+        return modules.filter(m => m.dependsOn === moduleId).map(m => m.id);
     };
 
     // Get all descendants of a module (recursive)
@@ -50,9 +69,9 @@ const UploadView = ({ onUploadSuccess }) => {
     //Get all ancestors of a module (recursive)
     const getAllAncestors = (moduleId) => {
         const module = modules.find(m => m.id === moduleId);
-        if (!module || !module.depends_on) return [];
-        const ancestors = [module.depends_on];
-        ancestors.push(...getAllAncestors(module.depends_on));
+        if (!module || !module.dependsOn) return [];
+        const ancestors = [module.dependsOn];
+        ancestors.push(...getAllAncestors(module.dependsOn));
         return ancestors;
     };
 
@@ -97,9 +116,91 @@ const UploadView = ({ onUploadSuccess }) => {
         }
     };
 
+    // Initialize module progress for selected modules
+    const initializeModuleProgress = (modulesArray) => {
+        const initial = {};
+        modulesArray.forEach(moduleId => {
+            initial[moduleId] = { percentage: 0, status: 'idle', dependencyName: '' };
+        });
+        setModuleProgress(initial);
+    };
+
+    // Connect to SSE stream for processing updates
+    const connectSSE = (jobId) => {
+        // Close existing connection if any
+        if (sseRef.current) {
+            sseRef.current.close();
+        }
+
+        sseRef.current = createSSEConnection(jobId, {
+            onDownloadProgress: (data) => {
+                const percentage = parseInt(data.message, 10) || 0;
+                setDownloadProgress({ percentage, status: 'running' });
+            },
+            onModelDownloading: (data) => {
+                const { model, status, progress } = data;
+                if (status === 'complete') {
+                    setModelDownloading(null);
+                } else {
+                    setModelDownloading({ model, status, progress });
+                }
+            },
+            onModuleProgress: (data) => {
+                const { module, status, message } = data;
+                if (!module) return;
+
+                // Clear model downloading when module processing starts
+                setModelDownloading(null);
+
+                if (status === 'resolving_dependency') {
+                    // Parent module is being processed first
+                    setModuleProgress(prev => ({
+                        ...prev,
+                        [module]: {
+                            ...prev[module],
+                            status: 'resolving_dependency',
+                            dependencyName: message
+                        }
+                    }));
+                } else if (status === 'running') {
+                    const percentage = parseInt(message, 10) || 0;
+                    setModuleProgress(prev => ({
+                        ...prev,
+                        [module]: {
+                            percentage,
+                            status: percentage >= 100 ? 'complete' : 'running',
+                            dependencyName: ''
+                        }
+                    }));
+                }
+            },
+            onIdChanged: (data) => {
+                finalProjectIdRef.current = data.new_id;
+            },
+            onError: (data) => {
+                const { module, message } = data;
+                if (module) {
+                    setModuleProgress(prev => ({
+                        ...prev,
+                        [module]: { ...prev[module], status: 'error' }
+                    }));
+                }
+                setError(message || 'Processing error');
+            },
+            onDone: () => {
+                setDownloadProgress(prev => prev ? { ...prev, status: 'complete' } : null);
+                setModelDownloading(null);
+            }
+        });
+    };
+
     const handleUpload = async () => {
         setIsLoading(true);
         setError(null);
+        setDownloadProgress(null);
+        setModelDownloading(null);
+        setModuleProgress({});
+        finalProjectIdRef.current = null;
 
         try {
             const modulesArray = Array.from(selectedModules);
@@ -109,21 +210,61 @@ const UploadView = ({ onUploadSuccess }) => {
                 return;
             }
 
+            // Initialize progress for all selected modules
+            initializeModuleProgress(modulesArray);
+
             let res;
             if (mode === 'file') {
                 if (!file) return;
-                res = await processFile(file, modulesArray);
+
+                // Generate a unique temp_project_id for SSE tracking
+                const tempProjectId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+                // Start API call with temp_project_id
+                const apiPromise = processFile(file, modulesArray, tempProjectId);
+
+                // Connect to SSE after delay to allow backend to create channel
+                setTimeout(() => connectSSE(tempProjectId), 500);
+
+                res = await apiPromise;
             } else {
                 if (!url) return;
-                res = await processUrl(url, modulesArray);
+
+                // Extract temp_project_id (same logic as api.js)
+                const cleanUrl = url.split('&')[0];
+                let tempProjectId = cleanUrl.split('=');
+                tempProjectId = tempProjectId[tempProjectId.length - 1];
+
+                // For URL mode, show download progress
+                setDownloadProgress({ percentage: 0, status: 'idle' });
+
+                // Start API call - SSE channel is created by backend when processing starts
+                const apiPromise = processUrl(url, modulesArray);
+
+                // Connect to SSE after a short delay to allow backend to create channel
+                setTimeout(() => connectSSE(tempProjectId), 500);
+
+                res = await apiPromise;
+            }
+
+            // Close SSE connection
+            if (sseRef.current) {
+                sseRef.current.close();
+                sseRef.current = null;
             }
 
             if (onUploadSuccess) {
                 await onUploadSuccess();
             }
 
-            navigate(`/library/${res.id}`);
+            // Use final project ID if it changed, otherwise use response ID
+            const projectId = finalProjectIdRef.current || res.id;
+            navigate(`/library/${projectId}`);
         } catch (err) {
+            if (sseRef.current) {
+                sseRef.current.close();
+                sseRef.current = null;
+            }
             setError(err.response?.data?.error || 'Error processing request');
         } finally {
             setIsLoading(false);
@@ -141,7 +282,7 @@ const UploadView = ({ onUploadSuccess }) => {
     // Render module checkbox
     const renderModuleCheckbox = (module, level = 0) => {
         const isChecked = selectedModules.has(module.id);
-        const children = modules.filter(m => m.depends_on === module.id);
+        const children = modules.filter(m => m.dependsOn === module.id);
 
         return (
             <div key={module.id} className={level == 0 ? 'module-sublist' : 'module-sublist-child'} style={{ marginLeft: level * 20 + 'px' }}>
@@ -228,7 +369,7 @@ const UploadView = ({ onUploadSuccess }) => {
                     )}
                 </div>
 
-                
+
                 <div className="processing-options">
                     <h3>Processing Options</h3>
                     <div className="modules-list">
@@ -236,12 +377,49 @@ const UploadView = ({ onUploadSuccess }) => {
                             <div key={category} className="module-category">
                                 <h4 className="module-category-title">{category}</h4>
                                 {categoryModules
-                                    .filter(m => !m.depends_on) // Show only root modules
+                                    .filter(m => !m.dependsOn) // Show only root modules
                                     .map(module => renderModuleCheckbox(module))}
                             </div>
                         ))}
                     </div>
                 </div>
+
+                {/* Progress Bars Section - shown during processing */}
+                {isLoading && (Object.keys(moduleProgress).length > 0 || downloadProgress || modelDownloading) && (
+                    <div className="progress-section">
+                        {/* Download Progress (URL mode only) */}
+                        {downloadProgress && (
+                            <ProgressBar
+                                label="Downloading"
+                                percentage={downloadProgress.percentage}
+                                status={downloadProgress.status}
+                            />
+                        )}
+
+                        {/* Model Downloading Indicator */}
+                        {modelDownloading && (
+                            <div className="model-downloading-indicator">
+                                <div className="loader-small"></div>
+                                <span>Downloading model: {modelDownloading.model?.split('.')[0] || 'AI model'}...</span>
+                            </div>
+                        )}
+
+                        {/* Module Progress Bars */}
+                        {Object.entries(moduleProgress).map(([moduleId, progress]) => {
+                            const module = modules.find(m => m.id === moduleId);
+                            const label = module?.description || moduleId;
+                            return (
+                                <ProgressBar
+                                    key={moduleId}
+                                    label={label}
+                                    percentage={progress.percentage}
+                                    status={progress.status}
+                                    dependencyName={progress.dependencyName}
+                                />
+                            );
+                        })}
+                    </div>
+                )}
 
                 {error && <div className="error-banner">{error}</div>}
 

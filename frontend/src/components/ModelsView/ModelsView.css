@@ -1,0 +1,353 @@
+.models-view {
+    padding: 2rem;
+    max-width: 1400px;
+    margin: 0 auto;
+    color: var(--text-main);
+}
+
+.models-header {
+    margin-bottom: 3rem;
+    text-align: center;
+}
+
+.models-header h1 {
+    font-size: 2.5rem;
+    font-weight: 800;
+    background: linear-gradient(to right, var(--primary), var(--accent));
+    background-clip: text;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    margin: 0 0 1rem 0;
+    letter-spacing: -0.02em;
+}
+
+.models-subtitle {
+    color: var(--text-sub);
+    font-size: 1.1rem;
+    max-width: 600px;
+    margin: 0 auto;
+    line-height: 1.6;
+}
+
+.models-content {
+    display: flex;
+    flex-direction: column;
+    gap: 3rem;
+}
+
+.models-category {
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 24px;
+    padding: 2rem;
+    border: 1px solid var(--border);
+}
+
+.category-title {
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin: 0 0 2rem 0;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.category-title::before {
+    content: '';
+    display: block;
+    width: 6px;
+    height: 24px;
+    background: var(--primary);
+    border-radius: 4px;
+}
+
+.models-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(350px, 1fr));
+    gap: 1.5rem;
+}
+
+.model-card {
+    background: var(--bg-panel);
+    border-radius: 16px;
+    padding: 1.5rem;
+    border: 1px solid var(--border);
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    position: relative;
+    /* overflow: hidden; Removed to allow dropdown to spill out */
+}
+
+.model-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--primary);
+    box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.5);
+}
+
+.model-technical-wrapper {
+    position: relative;
+    /* Pull wrapper to card edges (card padding is 1.5rem) */
+    margin: 1.5rem -1.5rem -1.5rem -1.5rem;
+    padding: 0;
+    border-top: none;
+    z-index: 10;
+}
+
+.technical-toggle {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-sub);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.5rem;
+    background: rgba(255, 255, 255, 0.02);
+    border-top: 1px solid var(--border);
+    /* Match card corners */
+    border-radius: 0 0 16px 16px;
+    transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    user-select: none;
+
+    /* Reset outdated styles */
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    margin: 0;
+}
+
+.technical-toggle:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.toggle-icon {
+    font-size: 0.6rem;
+    transition: transform 0.2s;
+}
+
+.toggle-icon.rotated {
+    transform: rotate(180deg);
+}
+
+.technical-content-overlay {
+    position: absolute;
+    top: 100%;
+    /* Align with outer edges of the card border */
+    left: -1px;
+    right: -1px;
+
+    background: var(--bg-panel);
+    border: 1px solid var(--primary);
+    border-top: none;
+    border-radius: 0 0 16px 16px;
+    padding: 1.5rem;
+    z-index: 100;
+    box-shadow: 0 15px 30px rgba(0, 0, 0, 0.5);
+    animation: slideDown 0.2s ease-out;
+}
+
+/* Connect toggle to overlay when expanded */
+.model-card.expanded .technical-toggle {
+    border-radius: 0;
+    background: var(--bg-panel);
+    color: var(--primary);
+    /* Keep separator line, or make it primary? Keeps clean look if border-color matches card border */
+    border-top-color: var(--border);
+}
+
+/* Initial state when expanded to make card look connected */
+.model-card.expanded {
+    border-color: var(--primary);
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom: 1px solid transparent;
+    /* Hide bottom border so overlay flows */
+    z-index: 100;
+    /* Bring card to front */
+}
+
+.model-header-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+}
+
+
+.model-name {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin: 0;
+    text-transform: capitalize;
+    line-height: 1.3;
+}
+
+.model-badge {
+    font-size: 0.7rem;
+    padding: 0.25rem 0.6rem;
+    border-radius: 100px;
+    white-space: nowrap;
+    font-weight: 600;
+}
+
+.model-badge.dependency {
+    background: rgba(255, 171, 64, 0.15);
+    /* needle color opacity */
+    color: var(--needle);
+    border: 1px solid rgba(255, 171, 64, 0.3);
+}
+
+.model-welcome-text {
+    color: var(--text-sub);
+    font-size: 0.95rem;
+    line-height: 1.6;
+    margin: 0;
+}
+
+.model-details {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+    margin-top: auto;
+}
+
+.model-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.detail-label {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.output-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+}
+
+.output-tag {
+    font-size: 0.8rem;
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+    padding: 0.35rem 0.75rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-light);
+}
+
+/* Scores Grid */
+.scores-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.75rem;
+}
+
+.score-group {
+    background: rgba(0, 0, 0, 0.2);
+    padding: 0.75rem;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+}
+
+.score-stem-name {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 0.5rem;
+    text-transform: capitalize;
+}
+
+.score-values {
+    display: flex;
+    gap: 1rem;
+}
+
+.score-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.score-label {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: var(--primary);
+}
+
+.score-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.model-description {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    margin: 0 0 1rem 0;
+}
+
+.model-file-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.model-filename {
+    font-size: 0.75rem;
+    color: var(--accent);
+    background: rgba(0, 242, 255, 0.05);
+    padding: 0.5rem;
+    border-radius: 4px;
+    border: 1px dashed rgba(0, 242, 255, 0.2);
+    word-break: break-all;
+    font-family: monospace;
+}
+
+/* Loading & Error */
+.models-loading,
+.models-error {
+    text-align: center;
+    padding: 4rem;
+    font-size: 1.2rem;
+    color: var(--text-sub);
+}
+
+.models-error {
+    color: var(--danger);
+}
+
+@media (max-width: 768px) {
+    .models-view {
+        padding: 1rem;
+    }
+
+    .models-grid {
+        grid-template-columns: 1fr;
+    }
+}

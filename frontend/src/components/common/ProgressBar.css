@@ -1,0 +1,122 @@
+.progress-bar-component {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.progress-label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.progress-status-text {
+    font-size: 0.85rem;
+    color: var(--text-sub);
+    font-weight: 400;
+}
+
+.progress-track {
+    height: 6px;
+    background: rgba(0, 0, 0, 0.4);
+    border-radius: 3px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2) inset;
+}
+
+.progress-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+/* Running state - animated gradient */
+.progress-running .progress-fill {
+    background: linear-gradient(90deg, var(--primary) 0%, var(--accent) 100%);
+}
+
+.progress-running .progress-fill::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(90deg,
+            transparent 0%,
+            rgba(255, 255, 255, 0.25) 50%,
+            transparent 100%);
+    animation: progress-shine 1.5s infinite;
+}
+
+/* Resolving dependency state - pulsing */
+.progress-resolving .progress-fill {
+    background: linear-gradient(90deg, #f39c12 0%, #e67e22 100%);
+    animation: pulse-opacity 1.5s ease-in-out infinite;
+}
+
+.progress-resolving .progress-status-text {
+    color: #f39c12;
+}
+
+/* Complete state */
+.progress-complete .progress-fill {
+    background: linear-gradient(90deg, #27ae60 0%, #2ecc71 100%);
+}
+
+.progress-complete .progress-status-text {
+    color: #2ecc71;
+}
+
+/* Error state */
+.progress-error .progress-fill {
+    background: linear-gradient(90deg, #c0392b 0%, #e74c3c 100%);
+}
+
+.progress-error .progress-status-text {
+    color: #e74c3c;
+}
+
+/* Idle state */
+.progress-idle .progress-fill {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.progress-idle .progress-status-text {
+    color: var(--text-muted);
+}
+
+/* Animations */
+@keyframes progress-shine {
+    0% {
+        transform: translateX(-100%);
+    }
+
+    100% {
+        transform: translateX(100%);
+    }
+}
+
+@keyframes pulse-opacity {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.6;
+    }
+}

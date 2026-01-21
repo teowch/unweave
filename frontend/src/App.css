@@ -10,8 +10,9 @@
   --needle: #ffab40;
 
   --text-main: #ffffff;
-  --text-sub: #b0b0b0;
-  --text-muted: #707590;
+  --text-sub: #c0c0c0;
+  --text-muted: #9499b8;
+  --text-dim: #777777;
 
   --border: #333333;
   --border-light: #444444;
@@ -199,6 +200,6 @@ input[type=range]:focus {
 
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: none;
   }
 }

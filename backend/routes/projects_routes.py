@@ -1,5 +1,6 @@
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from services.container import project_service, file_service
+from AudioProject import AudioProject
 
 projects_bp = Blueprint('projects', __name__)
 
@@ -23,7 +24,6 @@ def get_project_status(project_id):
     # Re-reading logic from legacy api:
     # It loads AudioProject and gets executed_modules.
     try:
-        from AudioProject import AudioProject
         project = AudioProject.load(project_id, base_library=project_service.library_folder)
         return jsonify({
             'id': project_id,
@@ -52,14 +52,12 @@ def download_file(folder_id, filename):
     if not path:
         return jsonify({'error': 'File not found'}), 404
         
-    from flask import send_file
     return send_file(path, as_attachment=False)
 
 @projects_bp.route('/zip/<folder_id>', methods=['GET'])
 def download_zip(folder_id):
     try:
         zip_path = file_service.create_zip(folder_id)
-        from flask import send_file
         return send_file(zip_path, as_attachment=True)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -74,7 +72,6 @@ def download_zip_selected():
         
     try:
         zip_path = file_service.create_zip(folder_id, track_names)
-        from flask import send_file
         return send_file(zip_path, as_attachment=True)
     except Exception as e:
         return jsonify({'error': str(e)}), 500

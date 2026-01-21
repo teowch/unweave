@@ -45,6 +45,7 @@ class ProjectService:
                     original_file = None
                     track_date = folder_name
                     
+                    thumbnail = None  # Initialize before metadata loading
                     if os.path.exists(metadata_path):
                         try:
                             with open(metadata_path, 'r') as f:
@@ -52,9 +53,10 @@ class ProjectService:
                                 track_id = meta.get('id', folder_name)
                                 track_name = meta.get('name', folder_name)
                                 original_file = meta.get('original_file')
+                                thumbnail = meta.get('thumbnail')  # Extract thumbnail here
                                 if 'date' in meta:
                                     track_date = meta['date']
-                        except Exception as e:
+                        except (json.JSONDecodeError, IOError) as e:
                             print(f"Error reading metadata for {folder_name}: {e}")
                     
                     stems_list = []
@@ -77,6 +79,9 @@ class ProjectService:
                     }
                     if original_file:
                         track_data['original'] = original_file
+                    
+                    if thumbnail:
+                        track_data['thumbnail'] = thumbnail
 
                     found_folders.append(track_data)
                     
@@ -132,6 +137,19 @@ class ProjectService:
         # Check if already exists (update)
         existing = next((item for item in self.session_history if item["id"] == project_id), None)
         
+        # Read metadata for thumbnail and display name - easier than passing it down if we want full consistency
+        thumbnail = None
+        display_name = filename_no_ext  # Fallback to filename without extension
+        metadata_path = os.path.join(folder_path, 'metadata.json')
+        if os.path.exists(metadata_path):
+             try:
+                 with open(metadata_path, 'r') as f:
+                     meta = json.load(f)
+                     thumbnail = meta.get('thumbnail')
+                     display_name = meta.get('name', filename_no_ext)  # Use saved display name if available
+             except (json.JSONDecodeError, IOError):
+                 pass  # Metadata read failed, use defaults
+
         stems = new_stems if new_stems is not None else []
         if not stems and os.path.exists(folder_path):
              for f in os.listdir(folder_path):
@@ -143,11 +161,13 @@ class ProjectService:
 
         track_data = {
             'id': project_id,
-            'name': filename_no_ext,
+            'name': display_name,
             'date': timestamp,
             'stems': stems,
-            'original': filename
+            'original': filename,
         }
+        if thumbnail:
+            track_data['thumbnail'] = thumbnail
 
         if existing:
             # Update existing

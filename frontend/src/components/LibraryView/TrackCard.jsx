@@ -5,9 +5,13 @@ const TrackCard = ({ item }) => {
     return (
         <div className="track-card">
             <div className="card-art">
-                <div className="art-placeholder" style={{ background: `hsl(${item.name.length * 20}, 60%, 20%)` }}>
-                    <span>{item.name.substring(0, 2).toUpperCase()}</span>
-                </div>
+                {item.thumbnail ? (
+                    <img src={item.thumbnail} alt={item.name} className="track-thumbnail" />
+                ) : (
+                    <div className="art-placeholder" style={{ background: `hsl(${item.name.length * 20}, 60%, 20%)` }}>
+                        <span>{item.name.substring(0, 2).toUpperCase()}</span>
+                    </div>
+                )}
                 <div className="play-overlay">
                     <span>▶</span>
                 </div>

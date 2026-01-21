@@ -9,7 +9,14 @@ static_ffmpeg.add_paths()
 
 # Setup Flask
 app = Flask(__name__)
-CORS(app)
+
+# CORS: Restrict to known frontend origins (add production URL when deploying)
+CORS(app, origins=[
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://127.0.0.1:3000',
+    'http://127.0.0.1:5173',
+])
 
 # Import Routes
 from routes.projects_routes import projects_bp
@@ -22,6 +29,8 @@ app.register_blueprint(audio_bp, url_prefix='/api')
 app.register_blueprint(sse_bp, url_prefix='/api')
 
 if __name__ == '__main__':
-    port = 5000
-    print(f"Starting API on port {port}...")
-    app.run(debug=True, port=port)
+    port = int(os.environ.get('PORT', 5000))
+    debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
+    print(f"Starting API on port {port}... (debug={debug})")
+    app.run(debug=debug, port=port)
+

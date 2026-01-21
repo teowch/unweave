@@ -2,95 +2,33 @@ import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
 import './EditorView.css';
 import { useContextMenu } from '../ContextMenu/ContextMenuProvider';
-import drumsIcon from '../../assets/instruments/drums.png';
-import guitarIcon from '../../assets/instruments/guitar.png';
-import bassIcon from '../../assets/instruments/bass.png';
-import vocalIcon from '../../assets/instruments/vocal.png';
-import pianoIcon from '../../assets/instruments/piano.png';
-import otherIcon from '../../assets/instruments/other.png';
-import instrumentalIcon from '../../assets/instruments/instrumental.png';
-import originalIcon from '../../assets/instruments/original.png';
+import getStemIcon from '../utils/getStemIcon';
 
-const getStemIcon = (stemName) => {
-    const parts = stemName.toLowerCase().split('.');
-    const instrument = parts[parts.length - 2];
-    console.log(instrument)
-    const icons = { drumsIcon, bassIcon, guitarIcon, vocalIcon, pianoIcon, otherIcon, instrumentalIcon, originalIcon };
-    if (icons[instrument+'Icon']) return icons[instrument+'Icon'];
-    return null;
-};
+import { MuteIcon, VolumeIcon, SoloIcon, DownloadIcon, LockIcon, UnlockIcon, MoreHorizontalIcon as MoreIcon, XIcon } from '../common/Icons';
 
-
-// SVG Icons
-const MuteIcon = ({ active }) => (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        {active ? (
-            <>
-                <path d="M8 3.5L5 6H3v4h2l3 2.5V3.5z" fill="currentColor" />
-                <line x1="10" y1="6" x2="13" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                <line x1="13" y1="6" x2="10" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-            </>
-        ) : (
-            <>
-                <path d="M8 3.5L5 6H3v4h2l3 2.5V3.5z" fill="currentColor" />
-                <path d="M10 5.5c.5.5 1 1.5 1 2.5s-.5 2-1 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                <path d="M11.5 4c1 1 1.5 2.5 1.5 4s-.5 3-1.5 4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-            </>
-        )}
-    </svg>
-);
-
-const SoloIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="8" cy="8" r="2.5" fill="currentColor" />
-        <circle cx="8" cy="8" r="5" stroke="currentColor" strokeWidth="1.2" fill="none" />
-    </svg>
-);
-
-const DownloadIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <path d="M8 2v8m0 0L5 7m3 3l3-3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-        <path d="M3 12v1a1 1 0 001 1h8a1 1 0 001-1v-1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-);
-
-const LockIcon = ({ locked }) => (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        {locked ? (
-            <>
-                <rect x="4" y="7" width="8" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M5 7V5a3 3 0 016 0v2" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                <circle cx="8" cy="10" r="0.8" fill="currentColor" />
-            </>
-        ) : (
-            <>
-                <rect x="4" y="7" width="8" height="6" rx="1" stroke="currentColor" strokeWidth="1.5" />
-                <path d="M5 7V5a3 3 0 015-2.24" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                <circle cx="8" cy="10" r="0.8" fill="currentColor" />
-            </>
-        )}
-    </svg>
-);
-
-const MoreIcon = () => (
-    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <circle cx="8" cy="3" r="1.5" fill="currentColor" />
-        <circle cx="8" cy="8" r="1.5" fill="currentColor" />
-        <circle cx="8" cy="13" r="1.5" fill="currentColor" />
-    </svg>
-);
-
-// Custom Horizontal Bar Component
-const HorizontalBar = ({ value, min, max, onChange, mode = 'fill', origin = 'left', label, disabled, ticks = [] }) => {
+// Custom Slider Component (Horizontal/Vertical)
+const Slider = ({ value, min, max, onChange, orientation = 'horizontal', label, disabled }) => {
     const barRef = useRef(null);
 
-    const handleInteraction = (clientX) => {
+    const handleInteraction = (clientPos) => {
         if (disabled || !barRef.current) return;
         const rect = barRef.current.getBoundingClientRect();
-        const width = rect.width;
-        // Calculate normalized value (0 to 1) from left
-        const relativeX = Math.max(0, Math.min(width, clientX - rect.left));
-        const percentage = relativeX / width;
+
+        let percentage = 0;
+
+        if (orientation === 'vertical') {
+            const height = rect.height;
+            // Vertical: Bottom is 0, Top is 1
+            // clientY increases downwards.
+            // distance from bottom = rect.bottom - clientPos.y
+            const relativeY = Math.max(0, Math.min(height, rect.bottom - clientPos.y));
+            percentage = relativeY / height;
+        } else {
+            const width = rect.width;
+            // Horizontal: Left is 0, Right is 1
+            const relativeX = Math.max(0, Math.min(width, clientPos.x - rect.left));
+            percentage = relativeX / width;
+        }
 
         // Map to min-max range
         const newValue = min + percentage * (max - min);
@@ -99,10 +37,14 @@ const HorizontalBar = ({ value, min, max, onChange, mode = 'fill', origin = 'lef
 
     const handleMouseDown = (e) => {
         e.preventDefault();
-        handleInteraction(e.clientX);
+        e.stopPropagation(); // Prevent drag from propagating to parent (like reordering)
+
+        const getPos = (ev) => orientation === 'vertical' ? { x: ev.clientX, y: ev.clientY } : { x: ev.clientX, y: ev.clientY };
+
+        handleInteraction(getPos(e));
 
         const onMouseMove = (moveEvent) => {
-            handleInteraction(moveEvent.clientX);
+            handleInteraction(getPos(moveEvent));
         };
 
         const onMouseUp = () => {
@@ -118,45 +60,32 @@ const HorizontalBar = ({ value, min, max, onChange, mode = 'fill', origin = 'lef
     const range = max - min;
     const normalized = (value - min) / range; // 0 to 1
 
-    let content = null;
-
-    if (mode === 'handle') {
-        // Handle mode
+    const style = {};
+    if (orientation === 'vertical') {
+        style.height = `${normalized * 100}%`;
+        style.bottom = '0%';
+        style.width = '100%';
     } else {
-        // Fill Mode (Volume): A bar filling from origin
-        let fillWidth = '0%';
-        let fillLeft = '0%';
-
-        if (origin === 'center') {
-            const distanceFromCenter = Math.abs(normalized - 0.5);
-            fillWidth = `${distanceFromCenter * 100}%`;
-            fillLeft = normalized < 0.5 ? `${normalized * 100}%` : '50%';
-        } else {
-            fillWidth = `${normalized * 100}%`;
-            fillLeft = '0%';
-        }
-
-        content = (
-            <div
-                className="horizontal-bar-fill"
-                style={{ width: fillWidth, left: fillLeft }}
-            />
-        );
+        style.width = `${normalized * 100}%`;
+        style.left = '0%';
+        style.height = '100%';
     }
 
     return (
-        <div className={`horizontal-bar-wrapper ${disabled ? 'disabled' : ''}`} title={`${label}: ${Math.round(value * 100) / 100}`}>
-            <span className="slider-label-left">{label}</span>
+        <div
+            className={`slider-wrapper ${orientation} ${disabled ? 'disabled' : ''}`}
+            title={`${label}: ${Math.round(value * 100)}%`}
+        >
             <div
-                className="horizontal-bar-track"
+                className="slider-track"
                 ref={barRef}
                 onMouseDown={handleMouseDown}
             >
-                {mode === 'fill' && (
-                    <div className="bar-track-bg" />
-                )}
-
-                {content}
+                <div className="slider-track-bg" />
+                <div
+                    className="slider-fill"
+                    style={style}
+                />
             </div>
         </div>
     );
@@ -164,6 +93,7 @@ const HorizontalBar = ({ value, min, max, onChange, mode = 'fill', origin = 'lef
 
 const StemRow = ({
     stem,
+    displayName,
     sState = { vol: 0.5, muted: false, solo: false, locked: false },
     audioUrl,
     onUpdate,
@@ -177,6 +107,8 @@ const StemRow = ({
     effectiveVolume,
     handleMouseDown,
 }) => {
+    // Use displayName if provided, otherwise use stem (filename)
+    const nameToShow = displayName || stem;
     const containerRef = useRef(null);
     const wsRef = useRef(null);
     const [isReady, setIsReady] = useState(false);
@@ -399,89 +331,87 @@ const StemRow = ({
         >
             <div className="stem-controls-left">
 
-                <div className="stem-controls-left-top-section">
-                    <button
-                        className={`icon-btn ${sState?.locked ? 'active' : ''}`}
-                        onClick={handleLockToggle}
-                        title={sState?.locked ? "Unlock" : "Lock"}
-                    >
-                        <LockIcon locked={sState?.locked} />
-                    </button>
-                    <img src={getStemIcon(stem)} className="stem-type-icon" />
-
+                {/* Column 1: Actions */}
+                <div className="ctl-col ctl-col-actions">
                     <button
                         className="icon-btn btn-remove"
                         onClick={() => onRemove(stem)}
                         title="Remove from Player"
                         disabled={sState?.locked}
                     >
-                        ✕
+                        <XIcon size={16} />
                     </button>
-                </div>
 
-                <div className="stem-controls-left-middle-section">
                     <button
-                        className={`icon-btn btn-mute-small ${sState?.muted ? 'active' : ''}`}
-                        onClick={() => onUpdate('muted', !sState?.muted)}
-                        title={sState?.muted ? "Unmute" : "Mute"}
-                        disabled={sState?.locked}
+                        className={`icon-btn ${sState?.locked ? 'active' : ''}`}
+                        onClick={handleLockToggle}
+                        title={sState?.locked ? "Unlock" : "Lock"}
                     >
-                        <MuteIcon active={sState?.muted} />
+                        {sState?.locked ? <LockIcon size={14} /> : <UnlockIcon size={14} />}
                     </button>
-                    <HorizontalBar
-                        value={sState?.vol ?? 0.5}
-                        min={0}
-                        max={1}
-                        onChange={(val) => onUpdate('vol', val)}
-                        label=""
-                        origin="left"
-                        mode="fill"
-                        disabled={sState?.locked}
-                    />
-                    <button
-                        className={`icon-btn btn-solo ${sState?.solo ? 'active' : ''}`}
-                        onClick={() => onUpdate('solo', !sState?.solo)}
-                        title="Solo"
-                        disabled={sState?.locked}
-                    >
-                        <SoloIcon />
 
-                    </button>
-                </div>
-
-                <div className="stem-controls-left-bottom-section">
                     <button
                         className="icon-btn"
                         onClick={handleDownload}
                         title="Download Stem"
                         disabled={sState?.locked}
                     >
-                        <DownloadIcon />
+                        <DownloadIcon size={16} />
                     </button>
-                    <div className={`row-stem-name ${shouldScroll ? 'should-scroll' : ''}`} ref={stemNameRef} title={stem}>
+                </div>
+
+                {/* Column 2: Info & Icon & Solo */}
+                <div className="ctl-col ctl-col-center">
+                    <div className={`row-stem-name ${shouldScroll ? 'should-scroll' : ''}`} ref={stemNameRef} title={nameToShow}>
                         <div className="stem-name-scroll">
                             <span className="stem-name-text">
-                                {stem}
+                                {nameToShow}
                                 {isUnified && <span className="tag-unified">U</span>}
                             </span>
                             {shouldScroll && (
                                 <span className="stem-name-text stem-name-duplicate">
-                                    {stem}
+                                    {nameToShow}
                                     {isUnified && <span className="tag-unified">U</span>}
                                 </span>
                             )}
                         </div>
                     </div>
+                    <div className="stem-icon-container">
+                        <img src={getStemIcon(stem)} className="stem-type-icon-large" />
+                    </div>
+
                     <button
-                        className="icon-btn"
-                        onClick={(e) => {
-                            handleContextMenu(e);
-                        }}
-                        title="More Options"
+                        className={`icon-btn btn-solo ${sState?.solo ? 'active' : ''}`}
+                        onClick={() => onUpdate('solo', !sState?.solo)}
+                        title="Solo"
+                        disabled={sState?.locked}
                     >
-                        <MoreIcon />
+                        <SoloIcon size={16} />
                     </button>
                 </div>
+
+                {/* Column 3: Mix (Slider + Mute) */}
+                <div className="ctl-col ctl-col-mix">
+                    <Slider
+                        value={sState?.vol ?? 0.5}
+                        min={0}
+                        max={1}
+                        orientation="vertical"
+                        onChange={(val) => onUpdate('vol', val)}
+                        label="Volume"
+                        disabled={sState?.locked}
+                    />
+
+                    <button
+                        className={`icon-btn btn-mute ${sState?.muted ? 'active' : ''}`}
+                        onClick={() => onUpdate('muted', !sState?.muted)}
+                        title={sState?.muted ? "Unmute" : "Mute"}
+                        disabled={sState?.locked}
+                    >
+                        {sState?.muted ? <MuteIcon size={16} /> : <VolumeIcon size={16} />}
+                    </button>
+                </div>
+
             </div>
 
             <div className="waveform-wrapper"
@@ -496,4 +426,3 @@ const StemRow = ({
 };
 
 export default StemRow;
-

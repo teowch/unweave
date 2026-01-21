@@ -3,9 +3,14 @@ class SSEMessageHandler():
         self.project_id = project_id
         self.sse_manager = sse_manager
         self.module = None
+        self.current_model = None
 
     def set_module(self, module_name: str):
         self.module = module_name
+
+    def set_current_model(self, model_name: str):
+        """Set the current model being loaded/downloaded."""
+        self.current_model = model_name
 
     def _send_raw(self, event: str, data: dict):
         self.sse_manager.publish(self.project_id, event, data)
@@ -13,7 +18,7 @@ class SSEMessageHandler():
     def _send(self, event: str, status: str, message: str):
         """
         Sends a message to the client.
-        event can be: 'module_processing', 'download'
+        event can be: 'module_processing', 'download', 'model_downloading'
         status can be: 'running', 'resolving_dependency', 'error'
         if status is 'resolving_dependency', message should be the name of the module that is being resolved
         if status is 'running', message should be the percentage (without %) of the module that is being processed
@@ -21,11 +26,32 @@ class SSEMessageHandler():
         """
         self._send_raw(event, {'module': self.module, 'status': status, 'message': message})
 
-    def interceptor_callback(self, message: str):
-        if '%' not in message:
-            return
-        percentage = message.split('%')[0]
-        self.send_running('module_processing', percentage)
+    def interceptor_callback(self, message: str, event_type: str = "processing"):
+        """
+        Callback for log interceptor. Handles both model download and processing events.
+        
+        Args:
+            message: The log message
+            event_type: "model_download" or "processing"
+        """
+        if event_type == "model_download":
+            # Model download progress - parse download percentage/status
+            if '%' in message:
+                # Some download libraries output percentage
+                try:
+                    percentage = message.split('%')[0].strip().split()[-1]
+                    self.send_model_downloading(percentage)
+                except:
+                    self.send_model_downloading(message)
+            elif 'MB' in message or 'KB' in message or 'Downloading' in message.lower():
+                # Download status message
+                self.send_model_downloading(message)
+        else:
+            # Processing progress - original behavior
+            if '%' not in message:
+                return
+            percentage = message.split('%')[0]
+            self.send_running('module_processing', percentage)
 
     def download_callback(self, message: dict):
         if message['status'] == 'downloading':
@@ -40,6 +66,24 @@ class SSEMessageHandler():
 
     def send_running(self, event: str, percentage: str):
         self._send(event, 'running', percentage)
+
+    def send_model_downloading(self, progress: str):
+        """Send model downloading progress to client."""
+        self._send_raw('model_downloading', {
+            'module': self.module,
+            'model': self.current_model,
+            'status': 'downloading',
+            'progress': progress
+        })
+
+    def send_model_download_complete(self):
+        """Signal that model download is complete."""
+        self._send_raw('model_downloading', {
+            'module': self.module,
+            'model': self.current_model,
+            'status': 'complete',
+            'progress': '100'
+        })
 
     def send_module_completed(self):
         self.send_running('module_processing', 100)

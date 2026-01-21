@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { PlayIcon, PauseIcon, VolumeIcon } from '../common/Icons';
 import './EditorView.css'; // Assuming styles are shared or I should make a TransportBar.css? 
 // The user asked to separate css. I already put all css in EditorView.css. 
 // I'll import it here too or just rely on EditorView importing it if it's global, but explicit is better or using CSS modules.
@@ -83,18 +84,7 @@ const Ruler = ({ duration, currentTime, handleMouseDown, onReady }) => {
     );
 };
 
-// SVG Icons
-const PlayIcon = () => (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-        <path d="M8 5v14l11-7z" />
-    </svg>
-);
 
-const PauseIcon = () => (
-    <svg viewBox="0 0 24 24" width="18" height="18" fill="currentColor">
-        <path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z" />
-    </svg>
-);
 
 const TransportBar = ({
     isPlaying,
@@ -124,13 +114,11 @@ const TransportBar = ({
                         onClick={togglePlay}
                         title={isPlaying ? "Pause" : "Play"}
                     >
-                        {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                        {isPlaying ? <PauseIcon size={20} fill="currentColor" stroke="none" /> : <PlayIcon size={20} fill="currentColor" stroke="none" />}
                     </button>
 
                     <div className="vol-wrapper">
-                        <svg className="vol-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon>
-                        </svg>
+                        <VolumeIcon size={16} />
                         <div className="vol-slider-container">
                             <input
                                 type="range"

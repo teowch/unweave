@@ -15,30 +15,31 @@
     gap: 0.8rem;
     margin-bottom: 2.5rem;
     padding-left: 0.5rem;
+    font-family: 'Outfit', sans-serif;
+    font-weight: 800;
+    font-size: 1.8rem;
+    background: linear-gradient(135deg, var(--primary) 0%, var(--accent) 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    -webkit-text-fill-color: transparent;
+    color: transparent;
+    letter-spacing: 0.02em;
+    filter: drop-shadow(0 0 10px rgba(124, 77, 255, 0.4));
 }
 
-.logo-circle {
-    width: 32px;
-    height: 32px;
-    background: linear-gradient(135deg, var(--primary), #b388ff);
-    border-radius: 8px;
-}
-
-.app-title {
-    font-size: 1.1rem;
-    font-weight: 700;
-    color: var(--text-main);
-    margin: 0;
-    letter-spacing: -0.02em;
+.logo-image {
+    width: 100%;
 }
 
 .section-title {
     font-size: 0.75rem;
     text-transform: uppercase;
     color: var(--text-muted);
-    margin: 0 0 0.8rem 0.8rem;
+    margin: auto;
     letter-spacing: 0.05em;
     font-weight: 600;
+    display: flex;
+    align-items: center;
 }
 
 .nav-item {
@@ -56,6 +57,7 @@
     cursor: pointer;
     transition: all 0.2s ease;
     text-align: left;
+    text-decoration: none;
 }
 
 .nav-item:hover {
@@ -79,7 +81,196 @@
     text-align: center;
 }
 
-.version {
-    font-size: 0.7rem;
+.support-nav-item {
+    font-family: inherit;
+}
+
+.support-nav-item:hover .nav-icon {
+    color: #ff6b9d;
+}
+
+/* Support Modal Styles */
+.support-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.support-modal {
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    width: 90%;
+    max-width: 420px;
+    max-height: 90vh;
+    overflow-y: auto;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    animation: slideUp 0.25s ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(16px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.support-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1.25rem 1.5rem;
+    border-bottom: 1px solid var(--border);
+}
+
+.support-modal-header h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    color: var(--text-main);
+    margin: 0;
+}
+
+.support-modal-close {
+    background: transparent;
+    border: none;
     color: var(--text-muted);
+    cursor: pointer;
+    padding: 0.25rem;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+}
+
+.support-modal-close:hover {
+    color: var(--text-main);
+    background: var(--bg-hover);
+}
+
+.support-modal-content {
+    padding: 1.5rem;
+}
+
+.support-info-text {
+    font-size: 0.9rem;
+    color: var(--text-sub);
+    line-height: 1.6;
+    margin: 0 0 1.5rem 0;
+}
+
+.support-options {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+}
+
+.support-option {
+    background: var(--bg-main);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 1.25rem;
+}
+
+.support-option-primary {
+    border-color: var(--primary);
+    background: rgba(124, 77, 255, 0.05);
+}
+
+.support-option-header {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.github-icon {
+    color: var(--text-main);
+}
+
+.pix-badge {
+    background: linear-gradient(135deg, #32BCAD, #0D8E80);
+    color: white;
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    letter-spacing: 0.05em;
+}
+
+.support-option-title {
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.support-option-desc {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin: 0 0 1rem 0;
+}
+
+.support-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.65rem 1rem;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    font-family: inherit;
+}
+
+.support-btn-primary {
+    background: var(--primary);
+    color: white;
+    width: 100%;
+    justify-content: center;
+}
+
+.support-btn-primary:hover {
+    background: var(--primary-hover);
+    transform: translateY(-1px);
+}
+
+.support-btn-secondary {
+    background: var(--bg-panel);
+    color: var(--text-main);
+    border: 1px solid var(--border);
+}
+
+.support-btn-secondary:hover {
+    background: var(--bg-hover);
+    border-color: var(--border-light);
+}
+
+.pix-content {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 1rem;
+}
+
+.pix-qr-code {
+    width: 80%;
+    border-radius: 8px;
+    background: white;
+    padding: 8px;
 }
