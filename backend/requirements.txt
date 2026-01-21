@@ -1,13 +1,23 @@
-flask
-flask-cors
-demucs
-soundfile
-numpy
-yt-dlp
+# Core web framework
+flask>=3.0.0,<4.0
+flask-cors>=4.0.0,<5.0
+
+# Audio processing
+demucs>=4.0.0,<5.0
+soundfile>=0.13.0,<0.14
+numpy>=2.0.0,<3.0
+
+# URL download
+yt-dlp>=2024.0.0
+
+# PyTorch with CUDA 12.4 support
 --extra-index-url https://download.pytorch.org/whl/cu124
 torch==2.6.0
 torchaudio==2.6.0
 torchvision==0.21.0
-audio-separator[gpu]
-static_ffmpeg
-flask-sse
+
+# Audio separation engine
+audio-separator[gpu]>=0.18.0
+
+# FFmpeg binaries
+static_ffmpeg>=2.0

@@ -22,6 +22,7 @@ const UploadView = ({ onUploadSuccess }) => {
     const sseRef = useRef(null);
     const finalProjectIdRef = useRef(null);
     const [downloadProgress, setDownloadProgress] = useState(null); // { percentage, status }
+    const [modelDownloading, setModelDownloading] = useState(null); // { model, status, progress }
     const [moduleProgress, setModuleProgress] = useState({}); // { moduleId: { percentage, status, dependencyName } }
 
 
@@ -52,7 +53,7 @@ const UploadView = ({ onUploadSuccess }) => {
 
     // Get all children of a module
     const getChildren = (moduleId) => {
-        return modules.filter(m => m.depends_on === moduleId).map(m => m.id);
+        return modules.filter(m => m.dependsOn === moduleId).map(m => m.id);
     };
 
     // Get all descendants of a module (recursive)
@@ -68,9 +69,9 @@ const UploadView = ({ onUploadSuccess }) => {
     //Get all ancestors of a module (recursive)
     const getAllAncestors = (moduleId) => {
         const module = modules.find(m => m.id === moduleId);
-        if (!module || !module.depends_on) return [];
-        const ancestors = [module.depends_on];
-        ancestors.push(...getAllAncestors(module.depends_on));
+        if (!module || !module.dependsOn) return [];
+        const ancestors = [module.dependsOn];
+        ancestors.push(...getAllAncestors(module.dependsOn));
         return ancestors;
     };
 
@@ -136,9 +137,20 @@ const UploadView = ({ onUploadSuccess }) => {
                 const percentage = parseInt(data.message, 10) || 0;
                 setDownloadProgress({ percentage, status: 'running' });
             },
+            onModelDownloading: (data) => {
+                const { model, status, progress } = data;
+                if (status === 'complete') {
+                    setModelDownloading(null);
+                } else {
+                    setModelDownloading({ model, status, progress });
+                }
+            },
             onModuleProgress: (data) => {
                 const { module, status, message } = data;
                 if (!module) return;
+
+                // Clear model downloading when module processing starts
+                setModelDownloading(null);
 
                 if (status === 'resolving_dependency') {
                     // Parent module is being processed first
@@ -177,6 +189,7 @@ const UploadView = ({ onUploadSuccess }) => {
             },
             onDone: () => {
                 setDownloadProgress(prev => prev ? { ...prev, status: 'complete' } : null);
+                setModelDownloading(null);
             }
         });
     };
@@ -185,6 +198,7 @@ const UploadView = ({ onUploadSuccess }) => {
         setIsLoading(true);
         setError(null);
         setDownloadProgress(null);
+        setModelDownloading(null);
         setModuleProgress({});
         finalProjectIdRef.current = null;
 
@@ -268,7 +282,7 @@ const UploadView = ({ onUploadSuccess }) => {
     // Render module checkbox
     const renderModuleCheckbox = (module, level = 0) => {
         const isChecked = selectedModules.has(module.id);
-        const children = modules.filter(m => m.depends_on === module.id);
+        const children = modules.filter(m => m.dependsOn === module.id);
 
         return (
             <div key={module.id} className={level == 0 ? 'module-sublist' : 'module-sublist-child'} style={{ marginLeft: level * 20 + 'px' }}>
@@ -363,7 +377,7 @@ const UploadView = ({ onUploadSuccess }) => {
                             <div key={category} className="module-category">
                                 <h4 className="module-category-title">{category}</h4>
                                 {categoryModules
-                                    .filter(m => !m.depends_on) // Show only root modules
+                                    .filter(m => !m.dependsOn) // Show only root modules
                                     .map(module => renderModuleCheckbox(module))}
                             </div>
                         ))}
@@ -371,7 +385,7 @@ const UploadView = ({ onUploadSuccess }) => {
                 </div>
 
                 {/* Progress Bars Section - shown during processing */}
-                {isLoading && (Object.keys(moduleProgress).length > 0 || downloadProgress) && (
+                {isLoading && (Object.keys(moduleProgress).length > 0 || downloadProgress || modelDownloading) && (
                     <div className="progress-section">
                         {/* Download Progress (URL mode only) */}
                         {downloadProgress && (
@@ -380,6 +394,14 @@ const UploadView = ({ onUploadSuccess }) => {
                                 percentage={downloadProgress.percentage}
                                 status={downloadProgress.status}
                             />
+                        )}
+
+                        {/* Model Downloading Indicator */}
+                        {modelDownloading && (
+                            <div className="model-downloading-indicator">
+                                <div className="loader-small"></div>
+                                <span>Downloading model: {modelDownloading.model?.split('.')[0] || 'AI model'}...</span>
+                            </div>
                         )}
 
                         {/* Module Progress Bars */}

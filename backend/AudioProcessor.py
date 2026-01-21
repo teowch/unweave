@@ -38,7 +38,7 @@ class AudioProcessor:
         module_name: str, 
         input_path: str, 
         output_dir: str,
-        interceptor_callback: Optional[Callable[[str], None]] = None
+        interceptor_callback: Optional[Callable[[str, str], None]] = None
     ) -> Dict[str, str]:
         """
         Executes a single module separation.
@@ -47,6 +47,7 @@ class AudioProcessor:
             module_name: Name of the module to execute
             input_path: Path to the input audio file
             output_dir: Directory to write output files
+            interceptor_callback: Callback function (message, event_type) for progress updates
             
         Returns:
             Mapping of stem_key -> output_filepath
@@ -61,13 +62,14 @@ class AudioProcessor:
         # Set output directory
         self.separator.output_dir = output_dir
         
-        # Load model
+        # Load model - wrap with intercept to capture download progress
         logger.info(f"Loading model: {config['model']} for {module_name}")
-        self.separator.load_model(model_filename=config["model"])
+        with intercept(interceptor_callback, event_type="model_download"):
+            self.separator.load_model(model_filename=config["model"])
         
-        # Run separation
+        # Run separation - wrap with intercept to capture processing progress
         logger.info(f"Processing module: {module_name}...")
-        with intercept(interceptor_callback):
+        with intercept(interceptor_callback, event_type="processing"):
             self.separator.separate(
                 input_path,
                 custom_output_names=config["custom_output_names"]
@@ -84,3 +86,4 @@ class AudioProcessor:
         
         logger.info(f"Module '{module_name}' completed. Outputs: {list(outputs.keys())}")
         return outputs
+

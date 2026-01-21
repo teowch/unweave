@@ -1,13 +1,23 @@
 from flask import Blueprint, jsonify, request
 from services.container import audio_service, project_service, file_service, sse_manager
 from services.SSEMessageHandler import SSEMessageHandler
-from modules import MODULE_REGISTRY, validate_modules
+from modules import MODULE_REGISTRY, validate_modules, get_modules_for_api
 from services.SSEManager import useSSEManager
 import json
+from urllib.parse import urlparse
 from werkzeug.utils import secure_filename
 import os
 from datetime import datetime
 from utils.sanitize import get_ascii_prefix, sanitize_filename
+
+
+def is_valid_url(url: str) -> bool:
+    """Validates that a URL has a valid HTTP/HTTPS scheme and netloc."""
+    try:
+        parsed = urlparse(url)
+        return parsed.scheme in ('http', 'https') and bool(parsed.netloc)
+    except Exception:
+        return False
 
 audio_bp = Blueprint('audio', __name__)
 
@@ -16,15 +26,7 @@ WORKFLOW_MAP = MODULE_REGISTRY
 
 @audio_bp.route('/modules', methods=['GET'])
 def get_modules():
-    modules = []
-    for module_id, config in MODULE_REGISTRY.items():
-        modules.append({
-            'id': module_id,
-            'description': config.get('description', ''),
-            'category': config.get('category', 'Uncategorized'),
-            'depends_on': config.get('depends_on')
-        })
-    return jsonify({'modules': modules}), 200
+    return jsonify({'modules': get_modules_for_api()}), 200
 
 @audio_bp.route('/process', methods=['POST'])
 def process_audio():
@@ -45,7 +47,7 @@ def process_audio():
         
     try:
         modules_to_run = json.loads(modules_json)
-    except:
+    except json.JSONDecodeError:
         return jsonify({'error': 'modules must be valid JSON'}), 400
         
     invalid = validate_modules(modules_to_run)
@@ -56,6 +58,7 @@ def process_audio():
         sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
 
         filename = sanitize_filename(secure_filename(file.filename))
+        original_display_name = os.path.splitext(file.filename)[0]  # Original filename before sanitization (for display)
         filename_no_ext = os.path.splitext(filename)[0]
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}" 
@@ -69,7 +72,7 @@ def process_audio():
         sse_message_handler.set_project_id(project_id)
         
         try:
-            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler)
+            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler, display_name=original_display_name)
             return jsonify(result), 200
         except Exception as e:
             import traceback
@@ -84,17 +87,16 @@ def process_url():
     temp_project_id = data.get('temp_project_id')
     
     if not url: return jsonify({'error': 'No URL provided'}), 400
+    if not is_valid_url(url): return jsonify({'error': 'Invalid URL format. Must be http:// or https://'}), 400
     if not modules_to_run: return jsonify({'error': 'modules required'}), 400
     if not temp_project_id: return jsonify({'error': 'temp_project_id required'}), 400
-    
-    # Validations...
     
     try:
         with useSSEManager(sse_manager, temp_project_id) as (_sse_manager, state):
 
             sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
 
-            downloaded_filepath, original_filename = audio_service.download_url(url, sse_message_handler)
+            downloaded_filepath, original_filename, thumbnail_url, video_title = audio_service.download_url(url, sse_message_handler)
             
             # Sanitize filename from URL download
             filename = sanitize_filename(original_filename)
@@ -117,7 +119,7 @@ def process_url():
             import shutil
             shutil.move(downloaded_filepath, persistent_filepath)
             
-            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler)
+            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler, thumbnail=thumbnail_url, display_name=video_title)
             return jsonify(result), 200
 
     except Exception as e:

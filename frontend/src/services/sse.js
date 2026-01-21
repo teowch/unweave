@@ -6,6 +6,7 @@ import { SSE_BASE } from './api';
  * Events emitted by the backend:
  * - 'download': Download progress { module, status: 'running', message: '<percentage>' }
  * - 'module_processing': Module processing { module, status: 'running'|'resolving_dependency', message: '<percentage>|<module_name>' }
+ * - 'model_downloading': Model download progress { module, model, status: 'downloading'|'complete', progress: '<percentage>|<message>' }
  * - 'id_changed': Project ID changed { new_id: '<new_project_id>' }
  * - 'error': Error occurred { module, status: 'error', message: '<error_message>' }
  * - 'done': Stream completed { message: 'closed' }
@@ -35,6 +36,7 @@ export function createSSEConnection(jobId, handlers = {}) {
     const {
         onDownloadProgress,
         onModuleProgress,
+        onModelDownloading,
         onIdChanged,
         onError,
         onDone,
@@ -76,6 +78,19 @@ export function createSSEConnection(jobId, handlers = {}) {
                 }
             } catch (e) {
                 console.error('Failed to parse module_processing event:', e);
+            }
+        });
+
+        // Handle model downloading events
+        eventSource.addEventListener('model_downloading', (event) => {
+            retryCount = 0; // Reset retry count on successful event
+            try {
+                const data = JSON.parse(event.data);
+                if (onModelDownloading) {
+                    onModelDownloading(data);
+                }
+            } catch (e) {
+                console.error('Failed to parse model_downloading event:', e);
             }
         });
 

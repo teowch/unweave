@@ -267,6 +267,9 @@ class AudioProject:
         # Get input path
         input_path = self.get_module_input(module_name)
         
+        # Set current model for SSE progress tracking
+        sse_message_handler.set_current_model(config["model"])
+        
         # Execute the module
         logger.info(f"Executing module: {module_name}")
         outputs = processor.execute_module(

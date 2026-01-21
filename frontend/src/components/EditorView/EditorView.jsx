@@ -6,6 +6,8 @@ import { useAudioPlayer } from '../../hooks/useAudioPlayer';
 import { useProjectData } from '../../hooks/useProjectData';
 import './EditorView.css';
 
+import { ArrowLeftIcon } from '../common/Icons';
+
 const EditorView = ({ track, onBack }) => {
     // --- Custom Hooks ---
     const {
@@ -33,9 +35,17 @@ const EditorView = ({ track, onBack }) => {
     // This state belongs here as it's the "Edit" session state
     const [stemState, setStemState] = useState({});
 
-    // Initialize Stem State on load
+    // Local stems list - tracks all stems including newly generated ones
+    // This is needed because track.stems prop doesn't update when modules generate new stems
+    const [allStems, setAllStems] = useState([]);
+
+    // Initialize Stem State and allStems on load
     useEffect(() => {
         if (!track?.stems) return;
+
+        // Initialize allStems from track.stems
+        setAllStems(track.stems);
+
         const initial = {};
         const allFiles = track.original ? [...track.stems, track.original] : track.stems;
 
@@ -78,6 +88,12 @@ const EditorView = ({ track, onBack }) => {
     const handleNewStemsAvailable = async (newStemsList) => {
         await loadNewStems(newStemsList);
 
+        // Update allStems with newly generated stems
+        setAllStems(prev => {
+            const newStems = newStemsList.filter(s => !prev.includes(s));
+            return newStems.length > 0 ? [...prev, ...newStems] : prev;
+        });
+
         // Init state for new stems
         setStemState(prev => {
             const updated = { ...prev };
@@ -88,12 +104,6 @@ const EditorView = ({ track, onBack }) => {
             });
             return updated;
         });
-
-        // Note: useProjectData handles downloading props, but we need to ensure local 'track' prop 
-        // in parent is updated or we just rely on StemBrowser having the latest list?
-        // In the original code, it mutated `track.stems`.
-        // Ideally we should use a callback to App to update track, but sticking to "Junior Dev" refactor scope,
-        // we assume stems are consistent.
     };
 
     const handleDownloadStem = (stem) => {
@@ -117,10 +127,10 @@ const EditorView = ({ track, onBack }) => {
         return () => { if (ctx.state !== 'closed') ctx.close(); }
     }, []);
 
-    // Stems to render
+    // Stems to render (uses allStems which includes newly generated stems)
     const stemsToRender = track.original
-        ? [...track.stems, track.original]
-        : track.stems;
+        ? [...allStems, track.original]
+        : allStems;
 
     const onSliderInteraction = (active) => sliderRef.current = active;
     const onInteractionStart = onSliderInteraction;
@@ -155,7 +165,10 @@ const EditorView = ({ track, onBack }) => {
         <div className="editor-view split-layout fade-in">
             <header className="editor-header">
                 <div className="left">
-                    <button onClick={onBack} className="btn btn-ghost">← Back</button>
+                    <button onClick={onBack} className="btn btn-ghost">
+                        <ArrowLeftIcon size={18} style={{ marginRight: '8px' }} />
+                        Back
+                    </button>
                     <h2>{track.name}</h2>
                 </div>
                 <div className="right">
@@ -165,14 +178,16 @@ const EditorView = ({ track, onBack }) => {
 
             <div className="editor-body">
                 <StemBrowser
-                    allStems={track.stems}
+                    allStems={allStems}
                     activeStemIds={activeStemIds}
                     trackId={track.id}
+                    trackName={track.name}
                     originalFile={track.original}
                     onAddToPlayer={addToPlayer}
                     onRemoveFromPlayer={removeFromPlayer}
                     onDownloadStem={handleDownloadStem}
                     onNewStemsAvailable={handleNewStemsAvailable}
+                    thumbnail={track.thumbnail}
                 />
 
                 <div className="mix-column">
@@ -201,6 +216,7 @@ const EditorView = ({ track, onBack }) => {
                                 <StemRow
                                     key={stem}
                                     stem={stem}
+                                    displayName={stem === track.original ? track.name : null}
                                     visible={activeStemIds.includes(stem)}
                                     sState={stemState[stem] || { vol: 0.5, muted: false, solo: false, locked: false }}
                                     audioUrl={audioUrls[stem]}

@@ -4,6 +4,34 @@ export const BASE = 'http://127.0.0.1:5000';
 export const API_BASE = `${BASE}/api`;
 export const SSE_BASE = `${BASE}/api/sse`;
 
+// Global Axios interceptor for centralized error handling
+axios.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        // Extract error message from response
+        const message = error.response?.data?.error
+            || error.response?.data?.message
+            || error.message
+            || 'An unexpected error occurred';
+
+        // Log all API errors for debugging
+        console.error('[API Error]', {
+            url: error.config?.url,
+            status: error.response?.status,
+            message: message
+        });
+
+        // Network errors (no response)
+        if (!error.response) {
+            console.error('[API Error] Network error - server may be offline');
+        }
+
+        // Preserve original error structure but ensure message is accessible
+        error.userMessage = message;
+        return Promise.reject(error);
+    }
+);
+
 /**
  * Get list of stems
  */
