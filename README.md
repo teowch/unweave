@@ -4,9 +4,9 @@
 
 ## Preview
 
-<table align="center">
+<table align="center" border="0">
 <tr>
-    <td align="center" colspan="2">
+    <td align="center">
       <img src="docs/screenshots/home.png" alt="Home View" width="100%"/>
       <br/>
       <em>Home / Upload View</em>
@@ -16,12 +16,14 @@
       <br/>
       <em>Project Library</em>
     </td>
-    <td align="center">
-      <img src="docs/screenshots/project.png" alt="Project View" width="100%"/>
+</tr>
+<tr>
+    <td align="center" colspan="2">
+      <img src="docs/screenshots/project.png" alt="Project View" width="75%"/>
       <br/>
       <em>Audio Editor Workspace</em>
     </td>
-  </tr>
+</tr>
 </table>
 
 ## Features
