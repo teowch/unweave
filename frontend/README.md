@@ -1,50 +1,40 @@
-# Music Track Separator - Frontend
+# Unweave Frontend
 
-The user interface for Music Track Separator, built with React and Vite. It provides a clean, modern interface for uploading songs, managing history, and playing back isolated stems.
+The frontend is a React Single Page Application (SPA) built with Vite. It interacts with the Flask backend to provide a seamless audio separation experience.
 
-## 💻 Tech Stack
+## Setup
 
-- **Framework**: React 19
-- **Build Tool**: Vite
-- **HTTP Client**: Axios
-- **Linting**: ESLint
-
-## 🚀 Getting Started
-
-1. **Navigate to the frontend directory:**
-   ```bash
-   cd frontend
-   ```
-
-2. **Install dependencies:**
+1. **Install Dependencies**:
    ```bash
    npm install
    ```
 
-3. **Start the development server:**
+2. **Run Development Server**:
    ```bash
    npm run dev
    ```
-   The app will run on `http://localhost:5173`.
+   Access at `http://localhost:5173`.
 
-## 📜 Available Scripts
+3. **Build for Production**:
+   ```bash
+   npm run build
+   ```
+   Output will be in the `dist` folder.
 
-- **`npm run dev`**: Starts the development server.
-- **`npm run build`**: Builds the app for production.
-- **`npm run lint`**: Runs ESLint to check for code quality issues.
-- **`npm run preview`**: Preview the production build locally.
+## Project Structure
 
-## 🧩 Key Components
+- **`src/components`**: Reusable UI components (`StemBrowser`, `TrackCard`, etc.).
+- **`src/views`**: Main page layouts.
+    - `LibraryView`: Displays past projects.
+    - `UploadView`: Drag-and-drop file upload.
+    - `EditorView`: Main workspace for processing and managing stems.
+    - `SettingsView`: System configuration and info.
+- **`src/services/api.js`**: Centralized Axios instance for backend communication.
+- **`src/services/sse.js`**: Handling of Server-Sent Events for real-time progress.
+- **`src/index.css`**: Global styles and design tokens.
 
-- **Upload/URL Input**: Drag & drop support and URL field for initiating processing.
-- **Player Modal**: Advanced Multi-track player to toggle stems (Vocals, Drums, Bass, Other), adjust global/individual volume, Unify tracks, and download original/processed files.
-- **History List**: View and access previously processed tracks.
-- **Unify Tracks**: Select specific stems and merge them into a single track directly in the browser.
+## Key Features
 
-## 📸 Screenshots
-
-![Player Modal](../docs/images/player_modal.png)
-
-## 🌐 API Integration
-
-The frontend assumes the backend is running at `http://localhost:5000`. Ensure the flask server is active for full functionality.
+- **Drag & Drop Upload**: Intuitive file handling.
+- **Real-time Progress**: Visual feedback during audio separation.
+- **Waveform Visualization**: `wavesurfer.js`.

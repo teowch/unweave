@@ -1,85 +1,42 @@
-# Music Track Separator - Backend
+# Unweave Backend
 
-The backend service for Music Track Separator, built with Flask. It handles file uploads, YouTube downloads, and audio source separation using Demucs.
+The backend is a Flask-based API handling audio processing, file management, and real-time state updates.
 
-## 🛠️ Tech Stack
+## Setup
 
-- **Framework**: Flask
-- **Audio Separation**: `demucs` (Hybrid Transformer Demucs)
-- **YouTube Download**: `yt-dlp`
-- **Audio Separation**: `demucs` (Hybrid Transformer Demucs)
-- **YouTube Download**: `yt-dlp`
-- **Audio Processing**: `soundfile`, `numpy`, `wave` (for unification)
-- **CORS**: `flask-cors`
-
-## ⚙️ Setup & Installation
-
-1. **Navigate to the backend directory:**
-   ```bash
-   cd backend
-   ```
-
-2. **Create a virtual environment:**
+1. **Python Environment**: Ensure Python 3.10+ is installed.
+2. **Virtual Environment**:
    ```bash
    python -m venv .venv
+   .venv\Scripts\activate  # Windows
+   source .venv/bin/activate  # Linux/Mac
    ```
-
-3. **Activate the virtual environment:**
-   - **Windows:** `.venv\Scripts\activate`
-   - **macOS/Linux:** `source .venv/bin/activate`
-
-4. **Install dependencies:**
+3. **Dependencies**:
    ```bash
    pip install -r requirements.txt
    ```
+   This setup includes PyTorch with CUDA 12.4 support for GPU acceleration.
 
-5. **Install FFmpeg:**
-   - FFmpeg is required for audio processing. Ensure it is installed and added to your system's PATH.
+4. **FFmpeg**:
+   - The project uses `static-ffmpeg` to automatically provision FFmpeg binaries.
+   - For optimal performance or troubleshooting, installing FFmpeg system-wide is recommended.
 
-## ▶️ Running the Server
+## Key Services
+
+- **`AudioService`**: Orchestrates `audio-separator`, manages demultiplexing, and handles download logic.
+- **`AudioProject`**: Encapsulates the state of a single separation project, including tracking executed modules and metadata.
+- **`SSEManager` & `SSEMessageHandler`**: Manages Server-Sent Events to push progress updates to the frontend.
+- **`ProjectService`**: Manages file system operations, project creation, retrieval, and deletion.
+
+## Running the Server
 
 ```bash
 python api.py
 ```
-The server will start on `http://localhost:5000`.
+- Runs on `http://127.0.0.1:5000` by default.
+- Set `FLASK_DEBUG=true` environment variable to enable debug mode.
 
-## 🔌 API Endpoints
+## Configuration
 
-### 🎵 Audio Processing
-
-- **`GET /api/modules`**
-    - List available processing modules.
-
-- **`POST /api/process`**
-    - Upload an audio file to process.
-    - **Body**: `form-data` with `file`, `modules` (JSON string).
-
-- **`POST /api/process-url`**
-    - Download and process audio from a YouTube URL.
-    - **Body**: JSON `{ "url": "...", "modules": [...] }`
-
-- **`POST /api/unify`**
-    - Combine selected stems into a new track.
-    - **Body**: JSON `{ "id": "folder_id", "tracks": ["vocals.wav", "drums.wav"] }`
-    - **Returns**: Name of the new unified track.
-
-### 📂 File Access & History
-
-- **`GET /api/history`**
-    - List all processed tracks.
-
-- **`GET /api/download/<folder_id>/<filename>`**
-    - Download a specific stem file.
-
-- **`GET /api/zip/<folder_id>`**
-    - Download all stems for a track as a ZIP archive.
-
-- **`POST /api/zip-selected`**
-    - Download a partial ZIP containing specific stems.
-    - **Body**: JSON `{ "id": "folder_id", "tracks": ["vocals.wav", "drums.wav"] }`
-
-## 📁 Directory Structure
-
-- **`api.py`**: Main application entry point and logic.
-- **`uploads/`**: (Created at runtime) Stores temporary uploaded raw files.
-- **`Library/`**: (Created at runtime) Stores processed audio stems, organized by timestamp and song title.
+- **`models.json`**: local cache of model info (downloaded/managed by `audio-separator`).
+- **`modules.py`**: Registry of available processing modules. Add new models/separators here.

@@ -1,88 +1,104 @@
-# Music Track Separator
+# Unweave
 
-A powerful web application for separating audio tracks from music files or YouTube videos. This project uses AI models to deconstruct audio into individual stems (vocals, drums, bass, other).
+**Unweave** is a powerful AI-driven audio separation and processing web application. It allows users to separate stems (vocals, drums, bass, etc.) from audio tracks and YouTube videos using state-of-the-art models, all through a modern web interface.
 
-## 🏗️ Architecture
+## Preview
 
-The system is built as a full-stack application:
+<table align="center">
+<tr>
+    <td align="center" colspan="2">
+      <img src="docs/screenshots/home.png" alt="Home View" width="100%"/>
+      <br/>
+      <em>Home / Upload View</em>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/library.png" alt="Library View" width="100%"/>
+      <br/>
+      <em>Project Library</em>
+    </td>
+    <td align="center">
+      <img src="docs/screenshots/project.png" alt="Project View" width="100%"/>
+      <br/>
+      <em>Audio Editor Workspace</em>
+    </td>
+  </tr>
+</table>
 
-- **Frontend**: React (Vite) for the user interface.
-- **Backend**: Flask (Python) with Service-Oriented Architecture (SOA) for API handling and audio processing.
-- **AI Core**: Meta's [Demucs](https://github.com/facebookresearch/demucs) model for high-quality source separation.
-- **Utilities**: `yt-dlp` for YouTube downloads and `ffmpeg` for audio mixing.
+## Features
 
-## ✨ Features
+- **Audio Separation**: Separate tracks into stems using advanced models (e.g., Demucs, MDX-Net via `audio-separator`).
+- **URL Processing**: Download and process audio directly from YouTube and other supported platforms.
+- **Project Management**: Auto-saving projects with detailed metadata and history.
+- **Real-time Updates**: Live progress tracking via Server-Sent Events (SSE).
+- **GPU Acceleration**: Built-in support for CUDA hardware acceleration.
+- **Post-Processing**: Unify specific stems or run additional processing modules on existing projects.
 
-- **Upload & Process**: Support for `.wav`, `.mp3`, `.ogg`, `.flac`.
-- **Module Selection**: Choose specific processing modules (e.g., Vocals/Instrumental only).
-- **YouTube Integration**: Process audio directly from YouTube links.
-- **Stem Player**: Listen to individual isolated tracks.
-- **Mixer**: Create custom mixes by combining specific stems.
-- **Unify Tracks**: Combine multiple selected stems into a new single track for download or listening.
-- **Download**: Export individual stems, the original file, a custom selection as ZIP, or the full processed package.
-- **Global Volume**: Control master volume alongside individual stem volumes.
-- **History**: Access previously processed tracks.
+## Prerequisites
 
-## 🚀 Quick Start
+Before running the project, ensure you have the following installed:
 
-### Prerequisites
+- **Python**: Version 3.10 or higher.
+- **Node.js**: Version 18 or higher.
+- **FFmpeg**: Shared libraries are required.
+    - *Windows*: The project uses `static-ffmpeg` to auto-provision, but having system FFmpeg is recommended as a fallback.
+- **CUDA Toolkit** (Optional): Version 12.x recommended for GPU acceleration on NVIDIA cards.
 
-- Node.js & npm
-- Python 3.8+
-- [FFmpeg](https://ffmpeg.org/download.html) (must be in your system PATH)
-- [CUDA](https://developer.nvidia.com/cuda-downloads) (for GPU acceleration)
-- [NVIDIA Driver](https://www.nvidia.com/Download/index.aspx) (for GPU acceleration)
+## Quick Start
 
-### Running the Application
+### 1. Backend Setup
 
-You need to run both the backend and frontend servers.
+The backend is built with Flask and Python.
 
-**1. Start the Backend:**
+1. Navigate to the backend directory:
+   ```bash
+   cd backend
+   ```
 
-```bash
-cd backend
-# Create virtual environment (optional but recommended)
-python -m venv .venv
-# Windows:
-.venv\Scripts\activate
-# Linux/Mac:
-source .venv/bin/activate
+2. Create and activate a virtual environment:
+   ```bash
+   # Windows
+   python -m venv .venv
+   .venv\Scripts\activate
 
-# Install dependencies
-pip install -r requirements.txt
+   # Linux/Mac
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
 
-# Run the server
-python api.py
-```
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+   *Note: This will install PyTorch with CUDA 12.4 support by default.*
 
-The backend runs on `http://localhost:5000`.
+4. Start the API server:
+   ```bash
+   python api.py
+   ```
+   The backend will start at `http://127.0.0.1:5000`.
 
-**2. Start the Frontend:**
+### 2. Frontend Setup
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
+The frontend is built with React and Vite.
 
-The frontend runs on `http://localhost:5173`.
+1. Open a new terminal and navigate to the frontend directory:
+   ```bash
+   cd frontend
+   ```
 
-## 📂 Project Structure
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
 
-- `backend/`: Flask API and audio processing logic.
-- `frontend/`: React application.
-- `uploads/`: Temporary storage for uploaded/downloaded files.
-- `Library/`: Processed audio results (stems).
+3. Start the development server:
+   ```bash
+   npm run dev
+   ```
+   The application will be accessible at `http://localhost:5173`.
 
-For more detailed documentation, check the [Backend README](./backend/README.md) and [Frontend README](./frontend/README.md).
+## Architecture Overview
 
-## 📸 Screenshots
-
-### Home & Upload
-![Home View](docs/images/home_view.png)
-
-### Music Library
-![Music Library](docs/images/library.png)
-
-### Player Modal
-![Player Modal](docs/images/player_modal.png)
+- **Backend**: Flask API handling audio processing, file management, and state persistence. Uses `audio-separator` for ML tasks.
+- **Frontend**: React application for the user interface, communicating with the backend via REST API and SSE for real-time status.
+- **Storage**: Projects are stored in `backend/output/` by default.
