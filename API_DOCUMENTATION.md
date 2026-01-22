@@ -2,6 +2,12 @@
 
 The backend API is built using Flask. All endpoints differ to the `/api` prefix.
 
+### Documentation Index
+
+- [Project Overview](README.md)
+- [Frontend Documentation](frontend/README.md)
+- [Backend Documentation](backend/README.md)
+
 **Base URL**: `http://127.0.0.1:5000/api`
 
 ## Projects
@@ -144,4 +150,3 @@ Subscribe to real-time progress updates for a specific job/project.
 - **Events**:
     - `progress`: `{"progress": 50, "status": "Separating..."}`
     - `done`: Processing complete.
-    - `error`: Error details.

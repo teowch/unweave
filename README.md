@@ -2,6 +2,12 @@
 
 **Unweave** is a powerful AI-driven audio separation and processing web application. It allows users to separate stems (vocals, drums, bass, etc.) from audio tracks and YouTube videos using state-of-the-art models, all through a modern web interface.
 
+### Documentation Index
+
+- [Frontend Documentation](frontend/README.md)
+- [Backend Documentation](backend/README.md)
+- [API Documentation](API_DOCUMENTATION.md)
+
 ## Preview
 
 <p align="center">
@@ -94,4 +100,3 @@ The frontend is built with React and Vite.
 
 - **Backend**: Flask API handling audio processing, file management, and state persistence. Uses `audio-separator` for ML tasks.
 - **Frontend**: React application for the user interface, communicating with the backend via REST API and SSE for real-time status.
-- **Storage**: Projects are stored in `backend/output/` by default.

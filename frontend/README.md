@@ -2,6 +2,12 @@
 
 The frontend is a React Single Page Application (SPA) built with Vite. It interacts with the Flask backend to provide a seamless audio separation experience.
 
+### Documentation Index
+
+- [Project Overview](../README.md)
+- [Backend Documentation](../backend/README.md)
+- [API Documentation](../API_DOCUMENTATION.md)
+
 ## Setup
 
 1. **Install Dependencies**:

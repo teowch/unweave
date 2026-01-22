@@ -2,6 +2,12 @@
 
 The backend is a Flask-based API handling audio processing, file management, and real-time state updates.
 
+### Documentation Index
+
+- [Project Overview](../README.md)
+- [Frontend Documentation](../frontend/README.md)
+- [API Documentation](../API_DOCUMENTATION.md)
+
 ## Setup
 
 1. **Python Environment**: Ensure Python 3.10+ is installed.
