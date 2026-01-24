@@ -184,3 +184,12 @@ export const getProjectStatus = async (trackId) => {
     const response = await axios.get(`${API_BASE}/project/${trackId}/status`);
     return response.data;
 };
+
+/**
+ * Get system information for settings page
+ * @returns {Promise<Object>} System info object
+ */
+export const getSystemInfo = async () => {
+    const response = await axios.get(`${API_BASE}/settings/system-info`);
+    return response.data;
+};

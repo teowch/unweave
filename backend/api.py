@@ -22,11 +22,13 @@ CORS(app, origins=[
 from routes.projects_routes import projects_bp
 from routes.audio_routes import audio_bp
 from routes.sse_routes import sse_bp
+from routes.settings_routes import settings_bp
 
 # Register Blueprints
 app.register_blueprint(projects_bp, url_prefix='/api')
 app.register_blueprint(audio_bp, url_prefix='/api')
 app.register_blueprint(sse_bp, url_prefix='/api')
+app.register_blueprint(settings_bp, url_prefix='/api')
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))

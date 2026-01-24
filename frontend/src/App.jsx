@@ -9,6 +9,7 @@ import UploadView from './components/UploadView/UploadView'
 import LibraryView from './components/LibraryView/LibraryView'
 import EditorView from './components/EditorView/EditorView'
 import ModelsView from './components/ModelsView/ModelsView'
+import SettingsView from './components/SettingsView/SettingsView'
 import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
 
@@ -92,6 +93,7 @@ function App() {
             <Route path="/library" element={<LibraryView items={library} refresh={refreshLibrary} />} />
             <Route path="/library/:id" element={<EditorRoute library={library} onUnify={handleUnify} isLoading={loading} />} />
             <Route path="/models" element={<ModelsView />} />
+            <Route path="/settings" element={<SettingsView />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
