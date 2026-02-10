@@ -11,7 +11,14 @@ export const useAudioPlayer = () => {
     const isScrubbingRef = useRef(false);
     const sliderRef = useRef(false);
 
-    // State to force re-renders if needed, though usually refs are enough for internal engine
+    // Refs for stable callback access (avoids re-creating registerWaveSurfer)
+    const currentTimeRef = useRef(currentTime);
+    const mainVolumeRef = useRef(mainVolume);
+    const durationRef = useRef(duration);
+
+    useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+    useEffect(() => { mainVolumeRef.current = mainVolume; }, [mainVolume]);
+    useEffect(() => { durationRef.current = duration; }, [duration]);
 
     // Sync Loop
     useEffect(() => {
@@ -24,7 +31,7 @@ export const useAudioPlayer = () => {
                 if (primaryId && wsRefs.current[primaryId]) {
                     const t = wsRefs.current[primaryId].getCurrentTime();
                     // Avoid excessive state updates
-                    if (Math.abs(t - currentTime) > 0.1) {
+                    if (Math.abs(t - currentTimeRef.current) > 0.1) {
                         setCurrentTime(t);
                     }
                 }
@@ -42,23 +49,22 @@ export const useAudioPlayer = () => {
     const registerWaveSurfer = useCallback((id, ws) => {
         if (ws) {
             wsRefs.current[id] = ws;
-            // Sync new instance to global state
-            ws.setVolume(mainVolume); // This might need to be per-stem masked by solo/mute logic, but base volume is main
-            ws.setTime(currentTime);
+            // Sync new instance to global state (reads from refs for latest values)
+            ws.setVolume(mainVolumeRef.current);
+            ws.setTime(currentTimeRef.current);
 
             // Update duration if not set
             const d = ws.getDuration();
-            if (d > 0 && Math.abs(d - duration) > 0.1) {
+            if (d > 0 && Math.abs(d - durationRef.current) > 0.1) {
                 setDuration(d);
             }
-            // Listen for ready to update duration?
             ws.on('ready', () => {
                 setDuration(prev => Math.max(prev, ws.getDuration()));
             });
         } else {
             delete wsRefs.current[id];
         }
-    }, [currentTime, mainVolume, duration]);
+    }, []);
 
     const togglePlay = useCallback(() => {
         setIsPlaying(prev => {

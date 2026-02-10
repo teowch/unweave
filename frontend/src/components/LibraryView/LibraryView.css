@@ -76,12 +76,7 @@ h2 {
     position: relative;
     top: 0;
 
-    background-image:
-        linear-gradient(var(--card-bg), var(--card-bg)),
-        linear-gradient(to top, var(--primary), var(--accent));
-    background-origin: padding-box, border-box;
-    background-clip: padding-box, border-box;
-    background-attachment: scroll, fixed;
+    background: var(--card-bg);
     border: 1px solid transparent;
 
     border-radius: 12px;
@@ -93,7 +88,7 @@ h2 {
 .track-card:hover {
     --card-bg: var(--bg-hover);
     top: -4px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    box-shadow: 0 0 0 2px var(--primary), 0 4px 20px rgba(0, 0, 0, 0.3);
 }
 
 .card-art {

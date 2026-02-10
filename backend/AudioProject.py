@@ -40,7 +40,13 @@ class AudioProject:
         self.session_folder = session_folder
         self.state: Dict[str, Any] = {
             "input_original": None,
-            "results": {}
+            "results": {},
+            # Display fields (unified — previously written by AudioService separately)
+            "id": project_id,
+            "name": None,
+            "original_file": None,
+            "date": None,
+            "thumbnail": None
         }
     
     @classmethod
@@ -61,6 +67,7 @@ class AudioProject:
         
         project = cls(project_id, session_folder)
         project.state["input_original"] = audio_file
+        project.state["id"] = project_id
         project._save_state()
         
         logger.info(f"Created new project '{project_id}' at {session_folder}")
@@ -125,13 +132,31 @@ class AudioProject:
         return os.path.join(self.session_folder, "metadata.json")
     
     def _save_state(self) -> None:
-        """Saves the current processing state to metadata.json."""
+        """Saves the complete project state (processing + display) to metadata.json."""
         path = self._get_metadata_path()
         try:
+            # Filter out None values to keep the JSON clean
+            data = {k: v for k, v in self.state.items() if v is not None}
             with open(path, 'w', encoding='utf-8') as f:
-                json.dump(self.state, f, indent=4, ensure_ascii=False)
+                json.dump(data, f, indent=4, ensure_ascii=False)
         except IOError as e:
             logger.error(f"Failed to save state to {path}: {e}")
+
+    def set_display_metadata(self, name: str, original_file: str, date: str, thumbnail: Optional[str] = None) -> None:
+        """Sets display metadata and persists to disk.
+        
+        Args:
+            name: Display name (video title or filename)
+            original_file: Original audio filename
+            date: Timestamp string
+            thumbnail: Optional thumbnail URL
+        """
+        self.state["name"] = name
+        self.state["original_file"] = original_file
+        self.state["date"] = date
+        if thumbnail:
+            self.state["thumbnail"] = thumbnail
+        self._save_state()
     
     def get_original_file(self) -> Optional[str]:
         """Returns the path to the original input file."""
@@ -263,6 +288,7 @@ class AudioProject:
             logger.info(f"Resolving dependency: '{module_name}' needs '{parent_module}'")
             sse_message_handler.send_resolving_dependency(parent_module)
             self.run_module(parent_module, processor, sse_message_handler)
+            sse_message_handler.set_module(module_name)
         
         # Get input path
         input_path = self.get_module_input(module_name)

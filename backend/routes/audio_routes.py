@@ -119,6 +119,9 @@ def process_url():
             import shutil
             shutil.move(downloaded_filepath, persistent_filepath)
             
+            # Clean up any yt-dlp leftover files (thumbnails, intermediate downloads)
+            file_service.cleanup_upload_folder()
+            
             result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler, thumbnail=thumbnail_url, display_name=video_title)
             return jsonify(result), 200
 
@@ -138,18 +141,9 @@ def run_additional_modules(project_id):
         
     project_metadata = project_service.get_project_metadata(project_id)
     if not project_metadata:
-         # Try to recover if disk exists but memory doesn't? ProjectService should handle?
-         # ProjectService.get_project_metadata relies on memory scan.
-         pass
-         
-    # We need the filename.
-    # If project_metadata is missing (e.g. freshly started and history not synced yet?), use ProjectService to find it?
-    # Actually ProjectService loads history on init.
-    
-    filename = project_metadata.get('original') if project_metadata else None
-    
-    # If we can't find filename in metadata, we might need to look at folder.
-    # But let's assume metadata is correct.
+        return jsonify({'error': 'Project metadata not found'}), 404
+          
+    filename = project_metadata.get('original')
     if not filename:
          return jsonify({'error': 'Original file unknown'}), 500
          

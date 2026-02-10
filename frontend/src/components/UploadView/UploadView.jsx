@@ -230,18 +230,16 @@ const UploadView = ({ onUploadSuccess }) => {
             } else {
                 if (!url) return;
 
-                // Extract temp_project_id (same logic as api.js)
-                const cleanUrl = url.split('&')[0];
-                let tempProjectId = cleanUrl.split('=');
-                tempProjectId = tempProjectId[tempProjectId.length - 1];
+                // Generate a unique temp_project_id for SSE tracking (same as file mode)
+                const tempProjectId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
                 // For URL mode, show download progress
                 setDownloadProgress({ percentage: 0, status: 'idle' });
 
-                // Start API call - SSE channel is created by backend when processing starts
-                const apiPromise = processUrl(url, modulesArray);
+                // Start API call with temp_project_id
+                const apiPromise = processUrl(url, modulesArray, tempProjectId);
 
-                // Connect to SSE after a short delay to allow backend to create channel
+                // Connect to SSE after delay to allow backend to create channel
                 setTimeout(() => connectSSE(tempProjectId), 500);
 
                 res = await apiPromise;

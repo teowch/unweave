@@ -1,18 +1,24 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { getProjectStatus, downloadStem } from '../services/api';
 
 export const useProjectData = (track) => {
-    // track object comes from parent (App or Router loader), but we might want to refresh it?
-    // Actually EditorView receives `track` prop.
-    // This hook will manage the "Active Stems" and "Audio URLs" (blobs).
-
     const [activeStemIds, setActiveStemIds] = useState([]);
     const [audioUrls, setAudioUrls] = useState({});
     const [loadingStems, setLoadingStems] = useState({});
 
+    // Ref to always hold the latest blob URLs for proper cleanup
+    const audioUrlsRef = useRef({});
+
+    // Keep the ref in sync with state
+    useEffect(() => {
+        audioUrlsRef.current = audioUrls;
+    }, [audioUrls]);
+
     // Initial Load
     useEffect(() => {
-        // Reset state when track changes
+        // Revoke previous blob URLs before resetting
+        Object.values(audioUrlsRef.current).forEach(u => URL.revokeObjectURL(u));
+
         setActiveStemIds([]);
         setAudioUrls({});
 
@@ -22,8 +28,6 @@ export const useProjectData = (track) => {
             const allFiles = [...track.stems];
             if (track.original) allFiles.push(track.original);
 
-            // We load blobs for ALL files initially? The original code did.
-            // This might be heavy for large projects, but let's replicate logic for now.
             for (const s of allFiles) {
                 setLoadingStems(prev => ({ ...prev, [s]: true }));
                 try {
@@ -38,11 +42,11 @@ export const useProjectData = (track) => {
         };
         loadAll();
 
+        // Cleanup on unmount or before next track load
         return () => {
-            // Cleanup Blobs
-            Object.values(audioUrls).forEach(u => URL.revokeObjectURL(u));
+            Object.values(audioUrlsRef.current).forEach(u => URL.revokeObjectURL(u));
         };
-    }, [track?.id]); // Only reload if ID changes
+    }, [track?.id]);
 
     const addToPlayer = useCallback((stem) => {
         setActiveStemIds(prev => prev.includes(stem) ? prev : [...prev, stem]);
@@ -53,8 +57,8 @@ export const useProjectData = (track) => {
     }, []);
 
     const loadNewStems = useCallback(async (newStemsList) => {
-        // filter already loaded
-        const unique = newStemsList.filter(s => !audioUrls[s]);
+        // Use ref to check already-loaded stems (avoids stale closure)
+        const unique = newStemsList.filter(s => !audioUrlsRef.current[s]);
 
         for (const s of unique) {
             setLoadingStems(prev => ({ ...prev, [s]: true }));
@@ -67,7 +71,7 @@ export const useProjectData = (track) => {
                 setLoadingStems(prev => ({ ...prev, [s]: false }));
             }
         }
-    }, [track?.id, audioUrls]);
+    }, [track?.id]);
 
     return {
         activeStemIds,

@@ -90,12 +90,10 @@ export const processFile = async (file, modules, temp_project_id) => {
  * Process audio from a URL (e.g., YouTube)
  * @param {string} url - The URL to process audio from
  * @param {Array<string>} modules - Array of module IDs to run (required)
+ * @param {string} temp_project_id - Unique ID for SSE tracking
  * @returns {Promise<Object>} Response data with track ID
  */
-export const processUrl = async (url, modules) => {
-    url = url.split('&')[0]
-    let temp_project_id = url.split('=')
-    temp_project_id = temp_project_id[temp_project_id.length - 1]
+export const processUrl = async (url, modules, temp_project_id) => {
     const response = await axios.post(`${API_BASE}/process-url`, { url, modules, temp_project_id });
     return response.data;
 };

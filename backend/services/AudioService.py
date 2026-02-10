@@ -44,35 +44,10 @@ class AudioService:
         # Run Modules
         project.run_modules(modules_to_run, self.processor, sse_message_handler)
 
-        # Save/Update Metadata
-        metadata_path = os.path.join(output_folder, 'metadata.json')
-        existing_metadata = {}
-        if os.path.exists(metadata_path):
-             try:
-                 with open(metadata_path, 'r') as f:
-                     existing_metadata = json.load(f)
-             except (json.JSONDecodeError, IOError) as e:
-                 logger.warning(f"Could not load existing metadata for {project_id}: {e}")
-        
-        # Timestamp from ID usually
+        # Set display metadata on the project (single source of truth)
         timestamp = project_id.split('_')[0] if '_' in project_id else datetime.now().strftime("%Y%m%d%H%M%S")
-
-        # Use display_name if provided (original video title or filename), else fall back to filename without extension
         track_display_name = display_name if display_name else filename_no_ext
-
-        metadata = {
-            'id': project_id,
-            'name': track_display_name,
-            'original_file': filename,
-            'date': timestamp
-        }
-        if thumbnail:
-            metadata['thumbnail'] = thumbnail
-            
-        existing_metadata.update(metadata)
-
-        with open(metadata_path, 'w') as f:
-            json.dump(existing_metadata, f, indent=2)
+        project.set_display_metadata(track_display_name, filename, timestamp, thumbnail)
 
         # Scan for results
         stems_list = []
@@ -91,7 +66,7 @@ class AudioService:
             'id': project_id,
             'stems': stems_list,
             'executed_modules': project.get_executed_modules(),
-            'thumbnail': existing_metadata.get('thumbnail')
+            'thumbnail': project.state.get('thumbnail')
         }
     
     def download_url(self, url, sse_message_handler: SSEMessageHandler):
@@ -106,6 +81,7 @@ class AudioService:
             'no_warnings': True,
             'noprogress': True,
             'no_color': True,
+            'noplaylist': True,
             'progress_hooks': [sse_message_handler.download_callback],
             'writethumbnail': True, 
         }

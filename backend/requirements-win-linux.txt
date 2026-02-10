@@ -1,0 +1,21 @@
+# Windows/Linux requirements with CUDA PyTorch
+# GPU acceleration for RTX 50 series (Blackwell) and older NVIDIA GPUs
+
+# PyPI as primary, nightly as secondary for torch packages only
+--extra-index-url https://download.pytorch.org/whl/nightly/cu128
+
+# PyTorch nightly with CUDA 12.8 (required for RTX 50 series / Blackwell GPUs)
+# torchvision pinned here so pip doesn't backtrack through all stable versions
+torch>=2.11.0.dev
+torchaudio>=2.11.0.dev
+torchvision>=0.22.0.dev
+
+# ONNX Runtime with GPU support (falls back to CPU if no GPU)
+onnxruntime-gpu>=1.16.0
+
+# Pin transitive deps that cause pip backtracking
+numba>=0.60.0
+llvmlite>=0.43.0
+
+# Base requirements (after PyTorch to prevent CPU torch override)
+-r requirements-base.txt

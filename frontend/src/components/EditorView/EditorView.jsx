@@ -70,7 +70,7 @@ const EditorView = ({ track, onBack }) => {
     // Calculate Effective Volumes
     const effectiveVolumes = useMemo(() => {
         const vols = {};
-        const anySolo = Object.values(stemState).some(s => s.solo && activeStemIds.includes(Object.keys(stemState).find(k => stemState[k] === s)));
+        const anySolo = activeStemIds.some(id => stemState[id]?.solo);
 
         activeStemIds.forEach(stem => {
             const state = stemState[stem] || { vol: 0.5, muted: false };

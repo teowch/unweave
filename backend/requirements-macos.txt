@@ -1,0 +1,11 @@
+# macOS requirements with CoreML support
+# Supports both Intel and Apple Silicon
+
+-r requirements-base.txt
+
+# PyTorch for macOS
+torch==2.6.0
+torchaudio==2.6.0
+
+# ONNX Runtime with CoreML/Metal support
+onnxruntime-silicon>=1.16.0

@@ -1,7 +1,10 @@
 import io
 import sys
+import logging
 from contextlib import contextmanager
 from typing import Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 class Interceptor(io.TextIOBase):
     def __init__(self, original_stream, callback, event_type: str = "processing"):
@@ -17,8 +20,8 @@ class Interceptor(io.TextIOBase):
                 raw_message = buf.strip()
                 if raw_message:
                     self.callback(raw_message, self.event_type)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Interceptor callback error: {e}")
             finally:
                 self._inside_callback = False
         if self.original_stream:

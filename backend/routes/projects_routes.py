@@ -1,4 +1,4 @@
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, jsonify, request, send_file, after_this_request
 from services.container import project_service, file_service
 from AudioProject import AudioProject
 
@@ -58,6 +58,12 @@ def download_file(folder_id, filename):
 def download_zip(folder_id):
     try:
         zip_path = file_service.create_zip(folder_id)
+
+        @after_this_request
+        def cleanup(response):
+            file_service.cleanup_zip(zip_path)
+            return response
+
         return send_file(zip_path, as_attachment=True)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -72,6 +78,12 @@ def download_zip_selected():
         
     try:
         zip_path = file_service.create_zip(folder_id, track_names)
+
+        @after_this_request
+        def cleanup(response):
+            file_service.cleanup_zip(zip_path)
+            return response
+
         return send_file(zip_path, as_attachment=True)
     except Exception as e:
         return jsonify({'error': str(e)}), 500
