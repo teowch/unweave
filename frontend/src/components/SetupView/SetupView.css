@@ -1,0 +1,269 @@
+/* ── SetupView: Full-screen GPU setup page ── */
+.setup-container {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    width: 100vw;
+    background: var(--bg-main);
+    padding: 2rem;
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+}
+
+.setup-card {
+    width: 100%;
+    max-width: 560px;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+}
+
+/* Header */
+.setup-header {
+    text-align: center;
+}
+
+.setup-header h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--text-main);
+    margin-bottom: 0.5rem;
+    letter-spacing: -0.02em;
+}
+
+.setup-header p {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
+
+/* Progress Section */
+.setup-progress {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.progress-bar-track {
+    height: 6px;
+    background: var(--bg-panel);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--primary), var(--accent));
+    border-radius: 3px;
+    transition: width 0.4s ease;
+    min-width: 0;
+}
+
+.progress-bar-fill.complete {
+    background: var(--success);
+}
+
+.progress-bar-fill.error {
+    background: var(--danger);
+}
+
+.progress-info {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.progress-step {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-main);
+}
+
+.progress-percent {
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.progress-detail {
+    font-size: 0.8rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* GPU Info Card */
+.gpu-info-card {
+    background: var(--bg-panel);
+    border-radius: 10px;
+    padding: 1.25rem;
+    border: 1px solid var(--border);
+    animation: fadeIn 0.3s ease-out;
+}
+
+.gpu-info-title {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    margin-bottom: 0.75rem;
+}
+
+.gpu-info-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.gpu-info-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.85rem;
+}
+
+.gpu-info-label {
+    color: var(--text-dim);
+}
+
+.gpu-info-value {
+    color: var(--text-main);
+    font-weight: 500;
+}
+
+.gpu-info-value.accent {
+    color: var(--accent);
+}
+
+.gpu-info-value.success {
+    color: var(--success);
+}
+
+/* Log Area */
+.setup-log {
+    background: #0d0d12;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    padding: 0.75rem 1rem;
+    max-height: 160px;
+    min-height: 80px;
+    overflow-y: auto;
+    font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+    font-size: 0.72rem;
+    line-height: 1.6;
+    color: var(--text-dim);
+}
+
+.setup-log .log-line {
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.setup-log .log-line.step {
+    color: var(--accent);
+    font-weight: 500;
+}
+
+.setup-log .log-line.error {
+    color: var(--danger);
+}
+
+.setup-log .log-line.success {
+    color: var(--success);
+}
+
+/* Actions */
+.setup-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+}
+
+.setup-btn-done {
+    background: linear-gradient(135deg, var(--primary), var(--accent));
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 0.75rem 2.5rem;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    opacity: 0;
+    animation: fadeIn 0.4s ease-out 0.2s forwards;
+}
+
+.setup-btn-done:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 20px rgba(124, 77, 255, 0.3);
+}
+
+/* Status Icon */
+.setup-status-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    margin: 0 auto 0.5rem;
+}
+
+.setup-status-icon.detecting {
+    background: rgba(124, 77, 255, 0.15);
+    color: var(--primary);
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.setup-status-icon.complete {
+    background: rgba(3, 218, 198, 0.15);
+    color: var(--success);
+}
+
+.setup-status-icon.error {
+    background: rgba(207, 102, 121, 0.15);
+    color: var(--danger);
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        transform: scale(1);
+        opacity: 0.8;
+    }
+
+    50% {
+        transform: scale(1.08);
+        opacity: 1;
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(8px);
+    }
+
+    to {
+        opacity: 1;
+        transform: none;
+    }
+}
+
+/* Non-Electron fallback */
+.setup-not-available {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 4rem 2rem;
+}
+
+.setup-not-available h2 {
+    margin-bottom: 0.5rem;
+    color: var(--text-sub);
+}

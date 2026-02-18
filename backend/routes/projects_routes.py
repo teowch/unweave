@@ -1,8 +1,37 @@
 from flask import Blueprint, jsonify, request, send_file, after_this_request
 from services.container import project_service, file_service
 from AudioProject import AudioProject
+from utils.waveform import precompute_waveform
+import os
 
 projects_bp = Blueprint('projects', __name__)
+
+@projects_bp.route('/waveform/<project_id>/<stem_name>', methods=['GET'])
+def get_waveform(project_id, stem_name):
+    """
+    Serve precomputed waveform peaks for a stem.
+    Falls back to on-demand computation if the JSON doesn't exist yet
+    (for projects processed before waveform precomputation was added).
+    """
+    project_path = project_service.get_project_path(project_id)
+    if not project_path:
+        return jsonify({'error': 'Project not found'}), 404
+
+    # Resolve the waveform JSON path
+    stem_base = os.path.splitext(stem_name)[0]
+    waveform_path = os.path.join(project_path, 'waveforms', f"{stem_base}.json")
+
+    # On-demand fallback: compute if missing (backward compat for old projects)
+    if not os.path.exists(waveform_path):
+        audio_path = os.path.join(project_path, stem_name)
+        if not os.path.exists(audio_path):
+            return jsonify({'error': 'Stem file not found'}), 404
+        try:
+            precompute_waveform(audio_path, waveform_path)
+        except Exception as e:
+            return jsonify({'error': f'Waveform computation failed: {e}'}), 500
+
+    return send_file(waveform_path, mimetype='application/json')
 
 @projects_bp.route('/history', methods=['GET'])
 def list_history():

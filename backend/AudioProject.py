@@ -8,6 +8,7 @@ import logging
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 
 from modules import MODULE_REGISTRY, get_module, get_dependency_chain
+from utils.waveform import precompute_waveforms_for_outputs
 
 if TYPE_CHECKING:
     from AudioProcessor import AudioProcessor
@@ -304,6 +305,9 @@ class AudioProject:
             output_dir=self.session_folder,
             interceptor_callback=sse_message_handler.interceptor_callback,
         )
+        
+        # Precompute waveform peaks for the frontend (~0.1-0.3s per stem, non-blocking)
+        precompute_waveforms_for_outputs(outputs, self.session_folder)
         
         # Record result
         self.record_module_result(

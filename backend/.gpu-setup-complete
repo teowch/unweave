@@ -1,0 +1,14 @@
+{
+  "completedAt": "2026-02-18T02:23:15.621Z",
+  "gpuInfo": {
+    "vendor": "nvidia",
+    "runtime": "cuda",
+    "cudaVariant": "cu128",
+    "gpuName": "NVIDIA GeForce RTX 5070",
+    "driverVersion": "591.44",
+    "computeCapability": 12,
+    "arch": "blackwell",
+    "note": "NVIDIA GeForce RTX 5070 (Blackwell) — full CUDA acceleration",
+    "error": null
+  }
+}

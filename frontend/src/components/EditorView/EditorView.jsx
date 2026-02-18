@@ -25,10 +25,11 @@ const EditorView = ({ track, onBack }) => {
     const {
         activeStemIds,
         audioUrls,
+        waveformPeaks,
         loadingStems,
         addToPlayer,
         removeFromPlayer,
-        loadNewStems
+        loadNewStems,
     } = useProjectData(track);
 
     // --- UI State (Mixer settings) ---
@@ -220,6 +221,7 @@ const EditorView = ({ track, onBack }) => {
                                     visible={activeStemIds.includes(stem)}
                                     sState={stemState[stem] || { vol: 0.5, muted: false, solo: false, locked: false }}
                                     audioUrl={audioUrls[stem]}
+                                    waveformPeaks={waveformPeaks[stem]}
                                     onUpdate={(key, val) => updateStem(stem, key, val)}
                                     onRemove={removeFromPlayer}
                                     onDownload={handleDownloadStem}

@@ -96,6 +96,7 @@ const StemRow = ({
     displayName,
     sState = { vol: 0.5, muted: false, solo: false, locked: false },
     audioUrl,
+    waveformPeaks,
     onUpdate,
     onRemove,
     onDownload,
@@ -177,8 +178,13 @@ const StemRow = ({
         };
     }, [stem, isReady, visible]); // Check when stem, waveform ready state, or visibility changes
 
+    // ── WaveSurfer initialization ──
+    // Renders waveform from precomputed peaks (instant, ~15 KB) if available.
+    // Audio blob is loaded separately only when needed for playback.
     useEffect(() => {
-        if (!audioUrl || !containerRef.current || !audioContext) return;
+        if (!containerRef.current || !audioContext) return;
+        // Need either peaks or audio to render anything
+        if (!waveformPeaks && !audioUrl) return;
 
         const abortController = new AbortController();
         let ws = null;
@@ -201,6 +207,13 @@ const StemRow = ({
                     cursorWidth: 0,
                     cursorColor: 'transparent',
                     audioContext: audioContext,
+                    // Only use precomputed peaks when audio isn't available yet.
+                    // When audioUrl IS available, let WaveSurfer load audio normally
+                    // so the 'ready' event fires and playback registration works.
+                    ...(!audioUrl && waveformPeaks ? {
+                        peaks: waveformPeaks.peaks,
+                        duration: waveformPeaks.duration,
+                    } : {}),
                 });
 
                 wsRef.current = ws;
@@ -220,8 +233,17 @@ const StemRow = ({
                     console.error('WaveSurfer error:', stem, err);
                 });
 
-                // Load the audio URL directly (it's already a blob URL from EditorView)
-                await ws.load(audioUrl).catch((e) => { if (e.name !== 'AbortError') console.error('WaveSurfer load error:', stem, e); });
+                if (waveformPeaks && !audioUrl) {
+                    // Peaks-only mode: render waveform from precomputed data.
+                    // No audio is loaded — this is instant and memory-friendly.
+                    // Don't register with parent (no audio to play/seek).
+                    setIsReady(true);
+                } else if (audioUrl) {
+                    // Full mode: load audio for playback (waveform from peaks or audio decode)
+                    await ws.load(audioUrl).catch((e) => {
+                        if (e.name !== 'AbortError') console.error('WaveSurfer load error:', stem, e);
+                    });
+                }
 
                 // Check if we were aborted during loading
                 if (abortController.signal.aborted) {
@@ -269,7 +291,7 @@ const StemRow = ({
             // 3. Update parent state
             registerWaveSurfer(stem, null);
         };
-    }, [audioUrl, stem, audioContext]);
+    }, [audioUrl, waveformPeaks, stem, audioContext]);
 
     // Handle Volume Updates from Parent (effective volume includes solo/mute/main logic)
     useEffect(() => {

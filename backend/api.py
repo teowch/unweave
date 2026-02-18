@@ -1,22 +1,44 @@
 import os
 import sys
-from flask import Flask
+from flask import Flask, jsonify
 from flask_cors import CORS
-import static_ffmpeg
 
-# Ensure ffmpeg paths
-static_ffmpeg.add_paths()
+# ── FFmpeg Setup ──
+# In Electron mode: use bundled ffmpeg from vendor/ffmpeg/{platform}
+# In dev mode: try bundled first, fall back to static_ffmpeg
+ELECTRON_MODE = os.environ.get('ELECTRON_MODE') == '1'
+
+if ELECTRON_MODE:
+    from utils.ffmpeg_setup import ffmpeg_paths
+    ffmpeg_bin, ffprobe_bin = ffmpeg_paths()
+    os.environ['PATH'] = os.path.dirname(ffmpeg_bin) + os.pathsep + os.environ.get('PATH', '')
+else:
+    try:
+        from utils.ffmpeg_setup import ffmpeg_paths
+        ffmpeg_bin, ffprobe_bin = ffmpeg_paths()
+        os.environ['PATH'] = os.path.dirname(ffmpeg_bin) + os.pathsep + os.environ.get('PATH', '')
+    except FileNotFoundError:
+        # Fall back to static_ffmpeg in dev if vendor/ffmpeg not downloaded
+        import static_ffmpeg
+        static_ffmpeg.add_paths()
 
 # Setup Flask
 app = Flask(__name__)
 
-# CORS: Restrict to known frontend origins (add production URL when deploying)
+# CORS: Allow known frontend origins + Electron custom protocol
 CORS(app, origins=[
     'http://localhost:3000',
     'http://localhost:5173',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:5173',
+    'app://*',       # Electron file:// via custom scheme
+    'unweave://*',   # Custom protocol
 ])
+
+# ── Health endpoint for Electron sidecar ──
+@app.route('/api/health')
+def health():
+    return jsonify({"status": "ok"})
 
 # Import Routes
 from routes.projects_routes import projects_bp
@@ -35,4 +57,3 @@ if __name__ == '__main__':
     debug = os.environ.get('FLASK_DEBUG', 'false').lower() == 'true'
     print(f"Starting API on port {port}... (debug={debug})")
     app.run(debug=debug, port=port)
-

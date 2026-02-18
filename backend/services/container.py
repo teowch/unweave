@@ -7,7 +7,7 @@ import os
 # Configuration (Could be moved to config.py)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROJECT_ROOT = os.path.dirname(BASE_DIR)
-LIBRARY_FOLDER = os.path.join(PROJECT_ROOT, 'Library')
+LIBRARY_FOLDER = os.environ.get('LIBRARY_PATH', os.path.join(PROJECT_ROOT, 'Library'))
 UPLOAD_FOLDER = os.path.abspath(os.path.join(BASE_DIR, 'uploads'))
 
 # Initialize Services

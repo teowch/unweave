@@ -1,5 +1,11 @@
 import axios from 'axios';
 
+// ── Environment Detection ──
+// In Electron: preload.js exposes window.electronAPI
+// The backend always runs on localhost — same port in both modes.
+const isElectron = typeof window !== 'undefined' && window.electronAPI?.isElectron;
+export { isElectron };
+
 export const BASE = 'http://127.0.0.1:5000';
 export const API_BASE = `${BASE}/api`;
 export const SSE_BASE = `${BASE}/api/sse`;
@@ -190,4 +196,35 @@ export const getProjectStatus = async (trackId) => {
 export const getSystemInfo = async () => {
     const response = await axios.get(`${API_BASE}/settings/system-info`);
     return response.data;
+};
+
+/**
+ * Get precomputed waveform peaks for a stem.
+ * Returns stereo min/max peak data (~15 KB JSON) instead of
+ * requiring the frontend to decode the full audio file.
+ * Falls back to on-demand computation for older projects.
+ *
+ * @param {string} projectId - Project ID
+ * @param {string} stemName  - Stem filename (e.g. 'vocals.flac')
+ * @returns {Promise<Object>} { duration, sample_rate, channels, peaks: [[[min,max],...], ...] }
+ */
+export const getWaveform = async (projectId, stemName) => {
+    const response = await axios.get(`${API_BASE}/waveform/${projectId}/${stemName}`);
+    return response.data;
+};
+
+/**
+ * Get the direct audio URL for a stem.
+ * In Electron mode: returns a unweave:// protocol URL (streams from disk).
+ * In web mode: returns null (caller should use downloadStem + blob URL instead).
+ *
+ * @param {string} projectId - Project ID
+ * @param {string} stemName  - Stem filename (e.g. 'vocals.flac')
+ * @returns {string|null} Direct audio URL or null
+ */
+export const getStemAudioUrl = (projectId, stemName) => {
+    if (isElectron) {
+        return `unweave://audio/${encodeURIComponent(projectId)}/${encodeURIComponent(stemName)}`;
+    }
+    return null;
 };

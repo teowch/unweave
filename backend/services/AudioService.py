@@ -9,6 +9,8 @@ import soundfile as sf
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 
+from utils.waveform import precompute_waveform
+
 from AudioProcessor import AudioProcessor
 from AudioProject import AudioProject
 from modules import MODULE_REGISTRY
@@ -163,6 +165,14 @@ class AudioService:
         
         # Write
         sf.write(output_path, mixed, sr)
+        
+        # Precompute waveform for the newly unified stem
+        waveform_dir = os.path.join(directory, 'waveforms')
+        waveform_json = os.path.join(waveform_dir, f"{combined_name}.unified.json")
+        try:
+            precompute_waveform(output_path, waveform_json)
+        except Exception as e:
+            logger.warning(f"Waveform precompute failed for unified stem: {e}")
         
         # Update Project Service
         # We need to refresh the stems list in ProjectService

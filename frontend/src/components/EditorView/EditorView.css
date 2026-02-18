@@ -610,7 +610,7 @@
     display: flex;
     background: #1e1e1e;
     overflow: hidden;
-    /* height: 80px; */
+    height: 125px;
     border: 1px solid #333;
 }
 
@@ -892,6 +892,7 @@
     flex: 1;
     position: relative;
     background: #000;
+    height: 100%;
 }
 
 .waveform-container {

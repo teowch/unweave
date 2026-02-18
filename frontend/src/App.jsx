@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { getHistory, unifyStems } from './services/api'
+import { getHistory, unifyStems, isElectron } from './services/api'
 import './App.css'
 
 // Components
@@ -10,6 +10,7 @@ import LibraryView from './components/LibraryView/LibraryView'
 import EditorView from './components/EditorView/EditorView'
 import ModelsView from './components/ModelsView/ModelsView'
 import SettingsView from './components/SettingsView/SettingsView'
+import SetupView from './components/SetupView/SetupView'
 import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
 
@@ -48,6 +49,27 @@ function App() {
   const [library, setLibrary] = useState([])
   const [loading, setLoading] = useState(true)
 
+  // ── Setup gate (Electron only) ──
+  // If setup hasn't been completed, block all routes and show the setup page.
+  const [setupRequired, setSetupRequired] = useState(() => {
+    if (!isElectron || !window.electronAPI) return false;
+    // Main process tells us via preload whether setup is needed
+    return window.electronAPI.isSetupRequired === true;
+  });
+
+  useEffect(() => {
+    // Listen for setup-complete event from main process
+    if (isElectron && window.electronAPI?.onSetupComplete) {
+      window.electronAPI.onSetupComplete(() => {
+        setSetupRequired(false);
+      });
+    }
+  }, []);
+
+  const handleSetupComplete = () => {
+    setSetupRequired(false);
+  };
+
   const refreshLibrary = async () => {
     try {
       const data = await getHistory()
@@ -62,8 +84,10 @@ function App() {
   }
 
   useEffect(() => {
-    refreshLibrary()
-  }, []) // Initial load
+    if (!setupRequired) {
+      refreshLibrary()
+    }
+  }, [setupRequired])
 
   const handleUnify = async (trackId, selectedStems) => {
     if (!selectedStems || selectedStems.length === 0) return alert("Select stems to unify first.")
@@ -80,6 +104,16 @@ function App() {
     }
   }
 
+  // ── Setup gate: only show setup page, no sidebar, no other routes ──
+  if (setupRequired) {
+    return (
+      <Routes>
+        <Route path="*" element={<SetupView onSetupComplete={handleSetupComplete} />} />
+      </Routes>
+    );
+  }
+
+  // ── Normal app (setup complete or non-Electron) ──
   return (
     <ContextMenuProvider>
       <div className="app-container">
@@ -94,6 +128,7 @@ function App() {
             <Route path="/library/:id" element={<EditorRoute library={library} onUnify={handleUnify} isLoading={loading} />} />
             <Route path="/models" element={<ModelsView />} />
             <Route path="/settings" element={<SettingsView />} />
+            <Route path="/setup" element={<SetupView onSetupComplete={handleSetupComplete} />} />
             <Route path="*" element={<NotFound />} />
           </Routes>
         </main>
@@ -103,3 +138,4 @@ function App() {
 }
 
 export default App
+
