@@ -7,3 +7,7 @@ node_modules/
 __pycache__/
 .python-version
 Library/*
+dist-electron/
+frontend/dist/
+electron/resources/
+vendor/

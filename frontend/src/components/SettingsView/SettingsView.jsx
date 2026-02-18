@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import './SettingsView.css';
-import { getSystemInfo } from '../../services/api';
+import { getSystemInfo, isElectron } from '../../services/api';
 import {
     ZapIcon,
     ActivityIcon,
@@ -9,7 +10,8 @@ import {
     CheckIcon,
     XIcon,
     HardDriveIcon,
-    ExternalLinkIcon
+    ExternalLinkIcon,
+    RefreshCwIcon
 } from '../common/Icons';
 
 const getAccelerationHint = (info) => {
@@ -91,6 +93,7 @@ const ProgressBar = ({ value, label, subLabel }) => (
 );
 
 const SettingsView = () => {
+    const navigate = useNavigate();
     const [systemInfo, setSystemInfo] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
@@ -189,6 +192,17 @@ const SettingsView = () => {
                                 )}
                             </div>
                         )}
+
+                        {/* Re-detect GPU Button */}
+                        <div className="gpu-redetect-section">
+                            <button
+                                className="redetect-btn"
+                                onClick={() => navigate('/setup?mode=redetect')}
+                            >
+                                <RefreshCwIcon size={14} />
+                                <span>Re-detect GPU</span>
+                            </button>
+                        </div>
                     </div>
 
                     {/* Runtime Environment */}

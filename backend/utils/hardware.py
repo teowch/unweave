@@ -161,3 +161,137 @@ def get_system_info() -> Dict[str, Any]:
         info['ffmpeg_available'] = False
     
     return info
+
+
+def detect_gpu_hardware() -> Dict[str, Any]:
+    """
+    Detect GPU hardware and determine the appropriate runtime.
+    
+    This mirrors the gpu-detect.js logic (Phase 2 of ELECTRON_PLAN)
+    but runs on the Python side for the /api/gpu/re-setup endpoint.
+    
+    Returns:
+        Dict with keys:
+        - vendor: 'nvidia', 'amd', 'apple', 'none'
+        - runtime: 'cuda', 'rocm', 'directml', 'mps', 'cpu'
+        - cuda_variant: 'cu121', 'cu124', 'cu128' (NVIDIA only)
+        - gpu_name: Friendly GPU name
+        - driver_version: Driver version string
+        - compute_capability: Float (NVIDIA only)
+        - note: Optional info message
+    """
+    result = {
+        'vendor': 'none',
+        'runtime': 'cpu',
+        'gpu_name': None,
+        'driver_version': None,
+        'compute_capability': None,
+        'cuda_variant': None,
+        'note': None,
+    }
+    
+    # 1. Check NVIDIA via nvidia-smi
+    try:
+        output = subprocess.check_output(
+            ['nvidia-smi', '--query-gpu=name,driver_version,compute_cap', '--format=csv,noheader'],
+            stderr=subprocess.DEVNULL,
+            timeout=10,
+        ).decode().strip()
+        
+        if output:
+            parts = [p.strip() for p in output.split(',')]
+            if len(parts) >= 3:
+                result['vendor'] = 'nvidia'
+                result['gpu_name'] = parts[0]
+                result['driver_version'] = parts[1]
+                
+                try:
+                    cc = float(parts[2])
+                    result['compute_capability'] = cc
+                    driver_ver = float(parts[1].split('.')[0])
+                    
+                    if driver_ver < 525:
+                        result['runtime'] = 'cpu'
+                        result['note'] = f'NVIDIA driver {parts[1]} is too old (minimum: 525.60). Please update your driver.'
+                        return result
+                    
+                    if cc >= 10.0:
+                        result['cuda_variant'] = 'cu128'
+                        result['runtime'] = 'cuda'
+                        result['note'] = 'Blackwell architecture detected'
+                    elif cc >= 8.0:
+                        result['cuda_variant'] = 'cu124'
+                        result['runtime'] = 'cuda'
+                        result['note'] = 'Ada Lovelace/Ampere architecture detected'
+                    elif cc >= 7.0:
+                        result['cuda_variant'] = 'cu121'
+                        result['runtime'] = 'cuda'
+                        result['note'] = 'Turing/Volta architecture detected'
+                    else:
+                        result['runtime'] = 'cpu'
+                        result['note'] = f'GPU compute capability {cc} is too old for CUDA (minimum: 7.0)'
+                except (ValueError, IndexError):
+                    result['note'] = 'Could not parse compute capability'
+                
+                return result
+    except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+        pass
+    
+    # 2. Check AMD
+    if platform.system() == 'Linux':
+        try:
+            subprocess.check_output(['rocminfo'], stderr=subprocess.DEVNULL, timeout=10)
+            result['vendor'] = 'amd'
+            result['runtime'] = 'rocm'
+            result['note'] = 'AMD ROCm detected (Linux)'
+            return result
+        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            pass
+    
+    elif platform.system() == 'Windows':
+        try:
+            output = subprocess.check_output(
+                ['wmic', 'path', 'win32_VideoController', 'get', 'name'],
+                stderr=subprocess.DEVNULL,
+                timeout=10,
+            ).decode()
+            
+            # Check for AMD GPU (Radeon)
+            for line in output.strip().split('\n'):
+                line = line.strip()
+                if 'AMD' in line.upper() or 'RADEON' in line.upper():
+                    result['vendor'] = 'amd'
+                    result['runtime'] = 'directml'
+                    result['gpu_name'] = line
+                    result['note'] = 'AMD GPU detected — DirectML for ONNX models, CPU for Demucs'
+                    return result
+        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            pass
+    
+    # 3. Check Apple Silicon
+    if platform.system() == 'Darwin':
+        try:
+            cpu_brand = subprocess.check_output(
+                ['sysctl', '-n', 'machdep.cpu.brand_string'],
+                stderr=subprocess.DEVNULL,
+                timeout=5,
+            ).decode().strip()
+            
+            if 'Apple' in cpu_brand:
+                result['vendor'] = 'apple'
+                result['runtime'] = 'mps'
+                result['gpu_name'] = cpu_brand
+                result['note'] = 'Apple Silicon with MPS acceleration'
+                return result
+            else:
+                result['vendor'] = 'intel_mac'
+                result['runtime'] = 'cpu'
+                result['gpu_name'] = cpu_brand
+                result['note'] = 'Intel Mac — CPU only'
+                return result
+        except (FileNotFoundError, subprocess.TimeoutExpired, subprocess.CalledProcessError):
+            pass
+    
+    # 4. Fallback
+    result['note'] = 'No compatible GPU detected — running on CPU'
+    return result
