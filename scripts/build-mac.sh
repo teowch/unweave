@@ -73,6 +73,17 @@ else
     echo "   ⏭️  No download.py found, skipping FFmpeg download"
 fi
 
+# ── Step 4b: Keep only target-arch macOS ffmpeg binaries ──
+echo "   🧹 Removing non-macOS ffmpeg binaries..."
+rm -rf "$PROJECT_ROOT/backend/vendor/ffmpeg/win32"
+rm -rf "$PROJECT_ROOT/backend/vendor/ffmpeg/linux"
+rm -rf "$PROJECT_ROOT/backend/vendor/ffmpeg/linux_arm64"
+if [ "$ARCH" = "arm64" ]; then
+    rm -rf "$PROJECT_ROOT/backend/vendor/ffmpeg/darwin"
+else
+    rm -rf "$PROJECT_ROOT/backend/vendor/ffmpeg/darwin_arm64"
+fi
+
 # ── Step 5: Package Electron app ──
 echo ""
 echo "📦 Step 5/5: Packaging Electron app..."
