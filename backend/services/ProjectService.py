@@ -3,6 +3,8 @@ import json
 import shutil
 from typing import List, Dict, Optional, Any
 
+from persistence.project_catalog import build_history_entry, build_project_snapshot
+
 # Assuming these are in the python path (backend root)
 try:
     from AudioProject import AudioProject
@@ -26,9 +28,7 @@ class ProjectService:
         self.track_sessions: Dict[str, Dict[str, Any]] = {}
         self.session_history: List[Dict[str, Any]] = []
 
-        # Ensure library exists
         os.makedirs(self.library_folder, exist_ok=True)
-        # Initial scan
         self.refresh_history()
 
     def refresh_history(self):
@@ -126,6 +126,31 @@ class ProjectService:
             return []
         return self.project_repository.list_project_files(project_id)
 
+    def get_sqlite_history(self) -> List[Dict[str, Any]]:
+        if not self.project_repository:
+            return []
+
+        history = []
+        for project_row in self.project_repository.list_projects():
+            file_rows = self.project_repository.list_project_files(project_row["id"])
+            history.append(build_history_entry(project_row, file_rows))
+        return history
+
+    def get_sqlite_project_snapshot(self, project_id: str) -> Optional[Dict[str, Any]]:
+        if not self.project_repository:
+            return None
+
+        snapshot = self.project_repository.get_project_snapshot(project_id)
+        if not snapshot:
+            return None
+        return build_project_snapshot(snapshot["project"], snapshot["files"])
+
+    def get_sqlite_project_status(self, project_id: str) -> Optional[Dict[str, Any]]:
+        snapshot = self.get_sqlite_project_snapshot(project_id)
+        if not snapshot:
+            return None
+        return snapshot["status"]
+
     def get_history(self) -> List[Dict[str, Any]]:
         return self.session_history
 
@@ -133,14 +158,12 @@ class ProjectService:
         if project_id in self.track_sessions:
             return self.track_sessions[project_id]['path']
 
-        # Fallback: check disk directly
         path = os.path.join(self.library_folder, project_id)
         if os.path.exists(path):
             return path
         return None
 
     def get_project_metadata(self, project_id: str) -> Optional[Dict[str, Any]]:
-        # Check in memory history first
         for track in self.session_history:
             if track['id'] == project_id:
                 return track
@@ -155,13 +178,11 @@ class ProjectService:
         """Updates in-memory state after a new project creation or update."""
         filename_no_ext = os.path.splitext(filename)[0]
 
-        # Update Session Map
         self.track_sessions[project_id] = {
             'path': folder_path,
             'original': filename
         }
 
-        # Update History List
         existing = next((item for item in self.session_history if item["id"] == project_id), None)
 
         thumbnail = None
