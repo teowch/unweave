@@ -21,7 +21,6 @@ def is_valid_url(url: str) -> bool:
 
 audio_bp = Blueprint('audio', __name__)
 
-# Re-expose MODULE_REGISTRY map as alias WORKFLOW_MAP for compatibility if needed
 WORKFLOW_MAP = MODULE_REGISTRY
 
 @audio_bp.route('/modules', methods=['GET'])
@@ -32,45 +31,44 @@ def get_modules():
 def process_audio():
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
-    
+
     file = request.files['file']
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
-        
+
     modules_json = request.form.get('modules')
     if not modules_json:
         return jsonify({'error': 'modules field is required'}), 400
-    
+
     temp_project_id = request.form.get('temp_project_id')
     if not temp_project_id:
         return jsonify({'error': 'temp_project_id field is required'}), 400
-        
+
     try:
         modules_to_run = json.loads(modules_json)
     except json.JSONDecodeError:
         return jsonify({'error': 'modules must be valid JSON'}), 400
-        
+
     invalid = validate_modules(modules_to_run)
     if invalid:
         return jsonify({'error': f'Invalid modules: {invalid}'}), 400
-    
+
     with useSSEManager(sse_manager, temp_project_id) as (_sse_manager, state):
         sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
 
         filename = sanitize_filename(secure_filename(file.filename))
-        original_display_name = os.path.splitext(file.filename)[0]  # Original filename before sanitization (for display)
+        original_display_name = os.path.splitext(file.filename)[0]
         filename_no_ext = os.path.splitext(filename)[0]
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}" 
-        
+        project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}"
+
         output_folder = project_service.create_project_folder(project_id)
         original_path = os.path.join(output_folder, filename)
         file.save(original_path)
-        
-        # Update project ID and notify frontend
+
         state["job_id"] = project_id
         sse_message_handler.set_project_id(project_id)
-        
+
         try:
             result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler, display_name=original_display_name)
             return jsonify(result), 200
@@ -85,43 +83,41 @@ def process_url():
     url = data.get('url')
     modules_to_run = data.get('modules', [])
     temp_project_id = data.get('temp_project_id')
-    
-    if not url: return jsonify({'error': 'No URL provided'}), 400
-    if not is_valid_url(url): return jsonify({'error': 'Invalid URL format. Must be http:// or https://'}), 400
-    if not modules_to_run: return jsonify({'error': 'modules required'}), 400
-    if not temp_project_id: return jsonify({'error': 'temp_project_id required'}), 400
-    
+
+    if not url:
+        return jsonify({'error': 'No URL provided'}), 400
+    if not is_valid_url(url):
+        return jsonify({'error': 'Invalid URL format. Must be http:// or https://'}), 400
+    if not modules_to_run:
+        return jsonify({'error': 'modules required'}), 400
+    if not temp_project_id:
+        return jsonify({'error': 'temp_project_id required'}), 400
+
     try:
         with useSSEManager(sse_manager, temp_project_id) as (_sse_manager, state):
-
             sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
 
             downloaded_filepath, original_filename, thumbnail_url, video_title = audio_service.download_url(url, sse_message_handler)
-            
-            # Sanitize filename from URL download
+
             filename = sanitize_filename(original_filename)
             if filename != original_filename:
-                # Rename the downloaded file to the sanitized name
                 new_downloaded_filepath = os.path.join(os.path.dirname(downloaded_filepath), filename)
                 os.rename(downloaded_filepath, new_downloaded_filepath)
                 downloaded_filepath = new_downloaded_filepath
 
-            # Create Project
             timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
             filename_no_ext = os.path.splitext(filename)[0]
             project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}"
             state["job_id"] = project_id
             sse_message_handler.set_project_id(project_id)
-            
+
             output_folder = project_service.create_project_folder(project_id)
             persistent_filepath = os.path.join(output_folder, filename)
-            
+
             import shutil
             shutil.move(downloaded_filepath, persistent_filepath)
-            
-            # Clean up any yt-dlp leftover files (thumbnails, intermediate downloads)
             file_service.cleanup_upload_folder()
-            
+
             result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler, thumbnail=thumbnail_url, display_name=video_title)
             return jsonify(result), 200
 
@@ -134,25 +130,19 @@ def process_url():
 def run_additional_modules(project_id):
     data = request.json
     modules_to_run = data.get('modules', [])
-    
-    project_path = project_service.get_project_path(project_id)
-    if not project_path:
+
+    project_snapshot = project_service.get_sqlite_project_snapshot(project_id)
+    if not project_snapshot:
         return jsonify({'error': 'Project not found'}), 404
-        
-    project_metadata = project_service.get_project_metadata(project_id)
-    if not project_metadata:
-        return jsonify({'error': 'Project metadata not found'}), 404
-          
-    filename = project_metadata.get('original')
+
+    filename = project_snapshot['history'].get('original')
     if not filename:
-         return jsonify({'error': 'Original file unknown'}), 500
-         
+        return jsonify({'error': 'Original file unknown'}), 500
+
     try:
         with useSSEManager(sse_manager, project_id) as (_sse_manager, state):
             sse_message_handler = SSEMessageHandler(project_id, _sse_manager)
             result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler)
-            # Note: process_separation does "load_or_create" AudioProject, runs modules, and updates metadata.
-            # It effectively handles "run additional" too because AudioProject skips completed modules.
             return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -162,7 +152,7 @@ def unify_tracks():
     data = request.json
     project_id = data.get('id')
     track_names = data.get('tracks')
-    
+
     try:
         new_track = audio_service.unify_tracks(project_id, track_names)
         return jsonify({'message': 'Unify successful', 'new_track': new_track}), 200
