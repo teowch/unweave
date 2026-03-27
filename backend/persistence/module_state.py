@@ -74,9 +74,14 @@ def derive_project_state(file_rows):
         if file_info["relative_path"] != original_file
     )
 
+    available_modules = sorted(
+        module_id for module_id in MODULE_REGISTRY.keys() if module_id not in executed_modules
+    )
+
     return {
         "original_file": original_file,
         "stems": sorted(stem_candidates),
         "executed_modules": sorted(executed_modules),
+        "available_modules": available_modules,
         "audio_files": sorted(file_info["relative_path"] for file_info in audio_files),
     }

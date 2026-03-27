@@ -8,7 +8,7 @@ import './EditorView.css';
 
 import { ArrowLeftIcon } from '../common/Icons';
 
-const EditorView = ({ track, onBack }) => {
+const EditorView = ({ track, onBack, onProjectRefresh }) => {
     // --- Custom Hooks ---
     const {
         isPlaying,
@@ -26,35 +26,22 @@ const EditorView = ({ track, onBack }) => {
         activeStemIds,
         audioUrls,
         waveformPeaks,
-        loadingStems,
         addToPlayer,
         removeFromPlayer,
-        loadNewStems,
     } = useProjectData(track);
 
     // --- UI State (Mixer settings) ---
     // This state belongs here as it's the "Edit" session state
     const [stemState, setStemState] = useState({});
 
-    // Local stems list - tracks all stems including newly generated ones
-    // This is needed because track.stems prop doesn't update when modules generate new stems
-    const [allStems, setAllStems] = useState([]);
-
-    // Initialize Stem State and allStems on load
-    useEffect(() => {
-        if (!track?.stems) return;
-
-        // Initialize allStems from track.stems
-        setAllStems(track.stems);
-
-        const initial = {};
+    const resolvedStemState = useMemo(() => {
+        const next = {};
         const allFiles = track.original ? [...track.stems, track.original] : track.stems;
-
-        allFiles.forEach(s => {
-            initial[s] = { vol: 0.5, muted: false, solo: false, selected: false, locked: false };
+        allFiles.forEach(stem => {
+            next[stem] = stemState[stem] || { vol: 0.5, muted: false, solo: false, selected: false, locked: false };
         });
-        setStemState(initial);
-    }, [track]);
+        return next;
+    }, [stemState, track]);
 
     // Handle Mixer updates
     const updateStem = (stem, key, val) => {
@@ -71,10 +58,10 @@ const EditorView = ({ track, onBack }) => {
     // Calculate Effective Volumes
     const effectiveVolumes = useMemo(() => {
         const vols = {};
-        const anySolo = activeStemIds.some(id => stemState[id]?.solo);
+        const anySolo = activeStemIds.some(id => resolvedStemState[id]?.solo);
 
         activeStemIds.forEach(stem => {
-            const state = stemState[stem] || { vol: 0.5, muted: false };
+            const state = resolvedStemState[stem] || { vol: 0.5, muted: false };
             let effective = state.vol;
 
             if (state.muted) effective = 0;
@@ -83,29 +70,7 @@ const EditorView = ({ track, onBack }) => {
             vols[stem] = effective * mainVolume;
         });
         return vols;
-    }, [stemState, activeStemIds, mainVolume]);
-
-    // Handle new stems from Browser
-    const handleNewStemsAvailable = async (newStemsList) => {
-        await loadNewStems(newStemsList);
-
-        // Update allStems with newly generated stems
-        setAllStems(prev => {
-            const newStems = newStemsList.filter(s => !prev.includes(s));
-            return newStems.length > 0 ? [...prev, ...newStems] : prev;
-        });
-
-        // Init state for new stems
-        setStemState(prev => {
-            const updated = { ...prev };
-            newStemsList.forEach(s => {
-                if (!updated[s]) {
-                    updated[s] = { vol: 0.5, muted: false, solo: false, selected: false, locked: false };
-                }
-            });
-            return updated;
-        });
-    };
+    }, [resolvedStemState, activeStemIds, mainVolume]);
 
     const handleDownloadStem = (stem) => {
         const url = audioUrls[stem];
@@ -121,17 +86,19 @@ const EditorView = ({ track, onBack }) => {
     // Original had `new AudioContext()` in Effect.
     // We can lazily create one or let WaveSurfer handle it.
     // However, for visualization consistency, passing a shared context is good.
-    const [audioContext, setAudioContext] = useState(null);
+    const audioContext = useMemo(() => new (window.AudioContext || window.webkitAudioContext)(), []);
     useEffect(() => {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        setAudioContext(ctx);
-        return () => { if (ctx.state !== 'closed') ctx.close(); }
-    }, []);
+        return () => {
+            if (audioContext.state !== 'closed') {
+                audioContext.close();
+            }
+        };
+    }, [audioContext]);
 
-    // Stems to render (uses allStems which includes newly generated stems)
+    // Stems to render from the canonical project snapshot.
     const stemsToRender = track.original
-        ? [...allStems, track.original]
-        : allStems;
+        ? [...track.stems, track.original]
+        : track.stems;
 
     const onSliderInteraction = (active) => sliderRef.current = active;
     const onInteractionStart = onSliderInteraction;
@@ -179,15 +146,17 @@ const EditorView = ({ track, onBack }) => {
 
             <div className="editor-body">
                 <StemBrowser
-                    allStems={allStems}
+                    allStems={track.stems}
                     activeStemIds={activeStemIds}
                     trackId={track.id}
                     trackName={track.name}
                     originalFile={track.original}
+                    executedModules={track.executed_modules || []}
+                    availableModules={track.available_modules || []}
                     onAddToPlayer={addToPlayer}
                     onRemoveFromPlayer={removeFromPlayer}
                     onDownloadStem={handleDownloadStem}
-                    onNewStemsAvailable={handleNewStemsAvailable}
+                    onProjectRefresh={onProjectRefresh}
                     thumbnail={track.thumbnail}
                 />
 
@@ -219,7 +188,7 @@ const EditorView = ({ track, onBack }) => {
                                     stem={stem}
                                     displayName={stem === track.original ? track.name : null}
                                     visible={activeStemIds.includes(stem)}
-                                    sState={stemState[stem] || { vol: 0.5, muted: false, solo: false, locked: false }}
+                                    sState={resolvedStemState[stem] || { vol: 0.5, muted: false, solo: false, locked: false }}
                                     audioUrl={audioUrls[stem]}
                                     waveformPeaks={waveformPeaks[stem]}
                                     onUpdate={(key, val) => updateStem(stem, key, val)}

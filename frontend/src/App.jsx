@@ -1,9 +1,8 @@
-import { useState, useEffect, useRef } from 'react'
-import { Routes, Route, Navigate, useNavigate, useParams } from 'react-router-dom'
-import { getHistory, unifyStems, isElectron } from './services/api'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
+import { getHistory, getProject, isElectron, unifyStems } from './services/api'
 import './App.css'
 
-// Components
 import Sidebar from './components/Sidebar/Sidebar'
 import UploadView from './components/UploadView/UploadView'
 import LibraryView from './components/LibraryView/LibraryView'
@@ -14,106 +13,190 @@ import SetupView from './components/SetupView/SetupView'
 import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
 
-// Wrapper for EditorView to handle ID from params
-const EditorRoute = ({ library, onUnify, isLoading }) => {
+const CONSISTENCY_RETRY_MS = 1500
+
+const isConsistencyRetryable = (error) => {
+  const status = error?.response?.status
+  const payload = error?.response?.data || {}
+  return status === 409
+    || status === 423
+    || payload.consistency_checking === true
+    || payload.status === 'consistency_checking'
+}
+
+const ProjectStateScreen = ({ title, message, isRetrying = false }) => (
+  <div className="project-state-screen">
+    <div className="project-state-card">
+      <h2>{title}</h2>
+      <p>{message}</p>
+      {isRetrying ? <div className="project-state-loader" /> : null}
+    </div>
+  </div>
+)
+
+const EditorRoute = ({ onUnify, onProjectUpdated }) => {
   const { id } = useParams()
   const navigate = useNavigate()
   const [track, setTrack] = useState(null)
+  const [loadingProject, setLoadingProject] = useState(true)
   const [notFound, setNotFound] = useState(false)
+  const [consistencyMessage, setConsistencyMessage] = useState(null)
+  const retryTimeoutRef = useRef(null)
 
-  useEffect(() => {
-    if (!isLoading) {
-      if (library.length > 0) {
-        const found = library.find(t => t.id === id)
-        if (found) {
-          setTrack(found)
-          setNotFound(false)
-        } else {
-          setNotFound(true)
-        }
-      } else if (library.length === 0) {
-        // Library is empty after loading, so definitely not found
-        setNotFound(true)
+  const clearRetry = () => {
+    if (retryTimeoutRef.current) {
+      window.clearTimeout(retryTimeoutRef.current)
+      retryTimeoutRef.current = null
+    }
+  }
+
+  const loadProject = useCallback(async ({ silent = false } = {}) => {
+    clearRetry()
+
+    if (!silent) {
+      setLoadingProject(true)
+    }
+
+    try {
+      const project = await getProject(id)
+      setTrack(project)
+      setNotFound(false)
+      setConsistencyMessage(null)
+      if (onProjectUpdated) {
+        await onProjectUpdated()
+      }
+      return project
+    } catch (err) {
+      if (isConsistencyRetryable(err)) {
+        setConsistencyMessage(
+          err.response?.data?.message
+          || 'We found an inconsistency while loading this project. Consistency is being verified and this page will reload when ready.'
+        )
+        retryTimeoutRef.current = window.setTimeout(() => {
+          loadProject({ silent: true })
+        }, CONSISTENCY_RETRY_MS)
+        return null
+      }
+
+      setTrack(null)
+      setConsistencyMessage(null)
+      setNotFound(err.response?.status === 404)
+      return null
+    } finally {
+      if (!silent) {
+        setLoadingProject(false)
       }
     }
-  }, [id, library, isLoading])
+  }, [id, onProjectUpdated])
 
-  if (isLoading) return <div className="loader"></div>
+  useEffect(() => {
+    loadProject()
+
+    return () => {
+      clearRetry()
+    }
+  }, [loadProject])
+
+  if (loadingProject) return <div className="loader"></div>
+  if (consistencyMessage) {
+    return (
+      <ProjectStateScreen
+        title="Checking Project Consistency"
+        message={consistencyMessage}
+        isRetrying={true}
+      />
+    )
+  }
   if (notFound) return <NotFound />
   if (!track) return <div className="loader"></div>
 
-  return <EditorView track={track} onBack={() => navigate('/library')} onUnify={onUnify} />
+  return (
+    <EditorView
+      track={track}
+      onBack={() => navigate('/library')}
+      onProjectRefresh={() => loadProject({ silent: true })}
+      onUnify={onUnify}
+    />
+  )
 }
 
 function App() {
   const [library, setLibrary] = useState([])
-  const [loading, setLoading] = useState(true)
-
-  // ── Setup gate (Electron only) ──
-  // If setup hasn't been completed, block all routes and show the setup page.
   const [setupRequired, setSetupRequired] = useState(() => {
-    if (!isElectron || !window.electronAPI) return false;
-    // Main process tells us via preload whether setup is needed
-    return window.electronAPI.isSetupRequired === true;
-  });
+    if (!isElectron || !window.electronAPI) return false
+    return window.electronAPI.isSetupRequired === true
+  })
 
   useEffect(() => {
-    // Listen for setup-complete event from main process
     if (isElectron && window.electronAPI?.onSetupComplete) {
       window.electronAPI.onSetupComplete(() => {
-        setSetupRequired(false);
-      });
+        setSetupRequired(false)
+      })
     }
-  }, []);
+  }, [])
 
   const handleSetupComplete = () => {
-    setSetupRequired(false);
-  };
+    setSetupRequired(false)
+  }
 
   const refreshLibrary = async () => {
     try {
       const data = await getHistory()
       setLibrary(data)
-      setLoading(false)
       return data
     } catch (err) {
-      console.error("Failed to load library", err)
-      setLoading(false)
+      console.error('Failed to load library', err)
       return []
     }
   }
 
   useEffect(() => {
-    if (!setupRequired) {
-      refreshLibrary()
+    if (setupRequired) {
+      return undefined
+    }
+
+    let cancelled = false
+
+    getHistory()
+      .then((data) => {
+        if (!cancelled) {
+          setLibrary(data)
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          console.error('Failed to load library', err)
+        }
+      })
+
+    return () => {
+      cancelled = true
     }
   }, [setupRequired])
 
   const handleUnify = async (trackId, selectedStems) => {
-    if (!selectedStems || selectedStems.length === 0) return alert("Select stems to unify first.")
+    if (!selectedStems || selectedStems.length === 0) return alert('Select stems to unify first.')
 
     const hasUnified = selectedStems.some(s => s.includes('.unified'))
-    if (hasUnified) return alert("Cannot unify already unified tracks.")
+    if (hasUnified) return alert('Cannot unify already unified tracks.')
 
     try {
       await unifyStems(trackId, selectedStems)
       await refreshLibrary()
-      alert("Unification complete!")
+      alert('Unification complete!')
     } catch (err) {
-      alert(err.response?.data?.error || "Unification failed")
+      alert(err.response?.data?.error || 'Unification failed')
     }
   }
 
-  // ── Setup gate: only show setup page, no sidebar, no other routes ──
   if (setupRequired) {
     return (
       <Routes>
         <Route path="*" element={<SetupView onSetupComplete={handleSetupComplete} />} />
       </Routes>
-    );
+    )
   }
 
-  // ── Normal app (setup complete or non-Electron) ──
   return (
     <ContextMenuProvider>
       <div className="app-container">
@@ -122,10 +205,8 @@ function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/split" replace />} />
             <Route path="/split" element={<UploadView onUploadSuccess={refreshLibrary} />} />
-            {/* Note: UploadView onSuccess handling needs improvement to use useNavigate from within or pass navigate */}
-
             <Route path="/library" element={<LibraryView items={library} refresh={refreshLibrary} />} />
-            <Route path="/library/:id" element={<EditorRoute library={library} onUnify={handleUnify} isLoading={loading} />} />
+            <Route path="/library/:id" element={<EditorRoute onUnify={handleUnify} onProjectUpdated={refreshLibrary} />} />
             <Route path="/models" element={<ModelsView />} />
             <Route path="/settings" element={<SettingsView />} />
             <Route path="/setup" element={<SetupView onSetupComplete={handleSetupComplete} />} />
@@ -138,4 +219,3 @@ function App() {
 }
 
 export default App
-

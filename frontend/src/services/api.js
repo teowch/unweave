@@ -190,6 +190,28 @@ export const getProjectStatus = async (trackId) => {
 };
 
 /**
+ * Get the canonical project snapshot used by the editor.
+ * @param {string} trackId - The track/project ID
+ * @returns {Promise<Object>} Project snapshot with history and status data
+ */
+export const getProject = async (trackId) => {
+    const response = await axios.get(`${API_BASE}/project/${trackId}`);
+    const snapshot = response.data;
+    const history = snapshot.history || {};
+    const status = snapshot.status || {};
+
+    return {
+        ...history,
+        files: snapshot.files || [],
+        project: snapshot.project || null,
+        state: snapshot.state || null,
+        executed_modules: status.executed_modules || [],
+        available_modules: status.available_modules || [],
+        original_file: status.original_file || history.original || null,
+    };
+};
+
+/**
  * Get system information for settings page
  * @returns {Promise<Object>} System info object
  */

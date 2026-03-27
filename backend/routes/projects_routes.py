@@ -42,6 +42,14 @@ def get_project_status(project_id):
         return jsonify({'error': 'Project not found'}), 404
     return jsonify(project_status), 200
 
+
+@projects_bp.route('/project/<project_id>', methods=['GET'])
+def get_project(project_id):
+    project_snapshot = project_service.get_sqlite_project_snapshot(project_id)
+    if not project_snapshot:
+        return jsonify({'error': 'Project not found'}), 404
+    return jsonify(project_snapshot), 200
+
 @projects_bp.route('/delete/<folder_id>', methods=['DELETE'])
 def delete_session(folder_id):
     try:

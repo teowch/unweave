@@ -70,8 +70,64 @@ def test_project_status_route_uses_sqlite_backed_module_state(library_root, tmp_
     assert response.status_code == 200
     assert response.get_json() == {
         "id": PROJECT_ID,
+        "available_modules": [
+            "htdemucs_4s",
+            "htdemucs_6s",
+            "lead_backing",
+            "male_female",
+            "male_female_secondary",
+        ],
         "executed_modules": ["vocal_instrumental"],
         "original_file": "song.wav",
+    }
+
+
+def test_project_route_returns_canonical_sqlite_snapshot(library_root, tmp_path, monkeypatch):
+    client, _, _ = _create_test_context(library_root, tmp_path, monkeypatch)
+
+    response = client.get(f"/api/project/{PROJECT_ID}")
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "project": PROJECT_ROW,
+        "files": [
+            {"project_id": PROJECT_ID, "relative_path": "base_vocals.vocal.flac", "role": "audio"},
+            {"project_id": PROJECT_ID, "relative_path": "song.wav", "role": "audio"},
+            {"project_id": PROJECT_ID, "relative_path": "waveforms/song.json", "role": "waveform"},
+        ],
+        "history": {
+            "id": PROJECT_ID,
+            "name": "SQLite Project",
+            "date": "2026-03-27T18:00:00Z",
+            "stems": ["base_vocals.vocal.flac"],
+            "original": "song.wav",
+            "thumbnail": "thumbs/project-500.png",
+        },
+        "status": {
+            "id": PROJECT_ID,
+            "available_modules": [
+                "htdemucs_4s",
+                "htdemucs_6s",
+                "lead_backing",
+                "male_female",
+                "male_female_secondary",
+            ],
+            "executed_modules": ["vocal_instrumental"],
+            "original_file": "song.wav",
+        },
+        "state": {
+            "audio_files": ["base_vocals.vocal.flac", "song.wav"],
+            "available_modules": [
+                "htdemucs_4s",
+                "htdemucs_6s",
+                "lead_backing",
+                "male_female",
+                "male_female_secondary",
+            ],
+            "executed_modules": ["vocal_instrumental"],
+            "original_file": "song.wav",
+            "stems": ["base_vocals.vocal.flac"],
+        },
     }
 
 
@@ -79,6 +135,15 @@ def test_project_status_route_returns_404_for_unknown_project(library_root, tmp_
     client, _, _ = _create_test_context(library_root, tmp_path, monkeypatch)
 
     response = client.get("/api/project/missing-project/status")
+
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Project not found"
+
+
+def test_project_route_returns_404_for_unknown_project(library_root, tmp_path, monkeypatch):
+    client, _, _ = _create_test_context(library_root, tmp_path, monkeypatch)
+
+    response = client.get("/api/project/missing-project")
 
     assert response.status_code == 404
     assert response.get_json()["error"] == "Project not found"
