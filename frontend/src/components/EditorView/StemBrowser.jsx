@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getModules, runModules, getProjectStatus } from '../../services/api';
+import { getModules, runModules } from '../../services/api';
 import { createSSEConnection } from '../../services/sse';
 import ProgressBar from '../common/ProgressBar';
 import './EditorView.css';
@@ -145,10 +145,12 @@ const StemBrowser = ({
     trackId,
     trackName,          // Track name from metadata (for original file display)
     originalFile,
+    executedModules = [],
+    availableModules = [],
     onAddToPlayer,
     onRemoveFromPlayer,
     onDownloadStem,
-    onNewStemsAvailable,
+    onProjectRefresh,
     thumbnail
 }) => {
     // Collapsible sections state
@@ -165,7 +167,6 @@ const StemBrowser = ({
 
     // Modules state
     const [modules, setModules] = useState([]);
-    const [executedModules, setExecutedModules] = useState([]);
     const [selectedModules, setSelectedModules] = useState([]);
     const [processing, setProcessing] = useState(false);
     const [error, setError] = useState(null);
@@ -176,18 +177,16 @@ const StemBrowser = ({
 
     const browserRef = useRef(null);
 
-    // Fetch available modules and project status on mount/trackId change
+    // Fetch available module metadata on mount.
     useEffect(() => {
         getModules()
             .then(data => setModules(data.modules || []))
             .catch(err => console.error('Failed to load modules:', err));
+    }, []);
 
-        if (trackId) {
-            getProjectStatus(trackId)
-                .then(data => setExecutedModules(data.executed_modules || []))
-                .catch(err => console.error('Failed to load project status:', err));
-        }
-    }, [trackId]);
+    useEffect(() => {
+        setSelectedModules(prev => prev.filter(moduleId => availableModules.includes(moduleId)));
+    }, [availableModules]);
 
     // Auto-scroll when Process section expands
     useEffect(() => {
@@ -341,11 +340,9 @@ const StemBrowser = ({
                 sseRef.current = null;
             }
 
-            setExecutedModules(result.executed_modules || []);
             setModuleProgress({}); // Clear progress
-
-            if (onNewStemsAvailable && result.stems) {
-                onNewStemsAvailable(result.stems);
+            if (onProjectRefresh) {
+                await onProjectRefresh();
             }
 
             setSelectedModules([]);
@@ -393,8 +390,8 @@ const StemBrowser = ({
     const isTypeExpanded = (type) => !!expandedTypes[type];
 
     // Separate modules into executed and available
-    const availableModules = modules.filter(m => !isModuleExecuted(m.id));
-    const completedModules = modules.filter(m => isModuleExecuted(m.id));
+    const availableModuleItems = modules.filter(m => availableModules.includes(m.id));
+    const completedModules = modules.filter(m => executedModules.includes(m.id));
 
     // Count stems in player
     const stemsInPlayerCount = visibleStems.filter(s => isInPlayer(s)).length;
@@ -592,11 +589,11 @@ const StemBrowser = ({
                                 )}
 
                                 {/* Available Modules Grouped by Category */}
-                                {availableModules.length > 0 && (
+                                {availableModuleItems.length > 0 && (
                                     <>
                                         {/* Group modules by category */}
                                         {(() => {
-                                            const groupedModules = availableModules.reduce((acc, m) => {
+                                            const groupedModules = availableModuleItems.reduce((acc, m) => {
                                                 const cat = m.category || 'Other';
                                                 if (!acc[cat]) acc[cat] = [];
                                                 acc[cat].push(m);
@@ -626,7 +623,6 @@ const StemBrowser = ({
                                                     icon={<CpuIcon size={12} />} // Generic icon for now, or could map specific icons
                                                 >
                                                     {groupedModules[category].map(m => {
-                                                        const isDepMet = !m.dependsOn || isModuleExecuted(m.dependsOn);
                                                         const depName = m.dependsOn ? (modules.find(mod => mod.id === m.dependsOn)?.description || m.dependsOn) : '';
 
                                                         return (
@@ -687,9 +683,9 @@ const StemBrowser = ({
 
 
                             {/* All modules executed */}
-                            {availableModules.length === 0 && completedModules.length > 0 && (
-                                <p className="all-done-msg">All modules have been executed!</p>
-                            )}
+                                {availableModuleItems.length === 0 && completedModules.length > 0 && (
+                                    <p className="all-done-msg">All modules have been executed!</p>
+                                )}
 
                             {error && <div className="module-error">{error}</div>}
                         </div>

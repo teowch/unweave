@@ -1,5 +1,14 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
-import { getProjectStatus, downloadStem, getWaveform, isElectron, getStemAudioUrl } from '../services/api';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { downloadStem, getWaveform, isElectron, getStemAudioUrl } from '../services/api';
+
+const isConsistencyError = (error) => {
+    const status = error?.response?.status;
+    const payload = error?.response?.data || {};
+    return status === 409
+        || status === 423
+        || payload.consistency_checking === true
+        || payload.status === 'consistency_checking';
+};
 
 /**
  * useProjectData — manages stem state for the Editor.
@@ -10,14 +19,21 @@ import { getProjectStatus, downloadStem, getWaveform, isElectron, getStemAudioUr
  *   2. Audio blobs are ALSO loaded eagerly in background for playback readiness.
  *   3. Peaks render immediately; audio arrives shortly after for playback.
  */
-export const useProjectData = (track) => {
+export const useProjectData = (track, options = {}) => {
+    const { onConsistencyIssue } = options;
     const [activeStemIds, setActiveStemIds] = useState([]);
     const [audioUrls, setAudioUrls] = useState({});
     const [waveformPeaks, setWaveformPeaks] = useState({});   // stem -> peaks data
     const [loadingStems, setLoadingStems] = useState({});
+    const trackFiles = useMemo(
+        () => (track ? [...(track.stems || []), ...(track.original ? [track.original] : [])] : []),
+        [track],
+    );
+    const trackSignature = trackFiles.join('|');
 
     // Ref to always hold the latest blob URLs for proper cleanup
     const audioUrlsRef = useRef({});
+    const consistencyReportedRef = useRef(false);
 
     // Keep the ref in sync with state
     useEffect(() => {
@@ -30,14 +46,14 @@ export const useProjectData = (track) => {
         // Revoke previous blob URLs before resetting
         Object.values(audioUrlsRef.current).forEach(u => URL.revokeObjectURL(u));
 
-        setActiveStemIds([]);
+        setActiveStemIds(prev => prev.filter(stem => trackFiles.includes(stem)));
         setAudioUrls({});
         setWaveformPeaks({});
+        consistencyReportedRef.current = false;
 
         if (!track) return;
 
-        const allFiles = [...track.stems];
-        if (track.original) allFiles.push(track.original);
+        const allFiles = [...trackFiles];
 
         // 1. Fetch waveform peaks in parallel (fast, ~15 KB each)
         const loadPeaks = async () => {
@@ -47,6 +63,13 @@ export const useProjectData = (track) => {
                         const data = await getWaveform(track.id, s);
                         return { stem: s, data };
                     } catch (e) {
+                        if (isConsistencyError(e) && !consistencyReportedRef.current) {
+                            consistencyReportedRef.current = true;
+                            onConsistencyIssue?.(
+                                e.response?.data?.message
+                                || 'We found an inconsistency while loading this project. Consistency is being verified and this page will reload when ready.'
+                            );
+                        }
                         console.warn(`Waveform not available for ${s}:`, e.message);
                         return { stem: s, data: null };
                     }
@@ -79,6 +102,14 @@ export const useProjectData = (track) => {
                         const blob = await downloadStem(track.id, s);
                         setAudioUrls(prev => ({ ...prev, [s]: URL.createObjectURL(blob) }));
                     } catch (e) {
+                        if (isConsistencyError(e) && !consistencyReportedRef.current) {
+                            consistencyReportedRef.current = true;
+                            onConsistencyIssue?.(
+                                e.response?.data?.message
+                                || 'We found an inconsistency while loading this project. Consistency is being verified and this page will reload when ready.'
+                            );
+                            break;
+                        }
                         console.error("Error loading stem", s, e);
                     } finally {
                         setLoadingStems(prev => ({ ...prev, [s]: false }));
@@ -98,7 +129,7 @@ export const useProjectData = (track) => {
                 Object.values(audioUrlsRef.current).forEach(u => URL.revokeObjectURL(u));
             }
         };
-    }, [track?.id]);
+    }, [track, trackFiles, trackSignature, onConsistencyIssue]);
 
     const addToPlayer = useCallback((stem) => {
         setActiveStemIds(prev => prev.includes(stem) ? prev : [...prev, stem]);
@@ -108,46 +139,6 @@ export const useProjectData = (track) => {
         setActiveStemIds(prev => prev.filter(id => id !== stem));
     }, []);
 
-    const loadNewStems = useCallback(async (newStemsList) => {
-        // Load both peaks and audio for new stems
-        const unique = newStemsList.filter(s => !audioUrlsRef.current[s]);
-
-        // Peaks (parallel, fast)
-        const newPeaks = {};
-        await Promise.allSettled(
-            unique.map(async (s) => {
-                try {
-                    const data = await getWaveform(track.id, s);
-                    if (data) newPeaks[s] = data;
-                } catch (e) {
-                    console.warn(`Waveform not available for new stem ${s}:`, e.message);
-                }
-            })
-        );
-        if (Object.keys(newPeaks).length > 0) {
-            setWaveformPeaks(prev => ({ ...prev, ...newPeaks }));
-        }
-
-        // Audio
-        if (isElectron) {
-            const urls = {};
-            unique.forEach(s => { urls[s] = getStemAudioUrl(track.id, s); });
-            setAudioUrls(prev => ({ ...prev, ...urls }));
-        } else {
-            for (const s of unique) {
-                setLoadingStems(prev => ({ ...prev, [s]: true }));
-                try {
-                    const blob = await downloadStem(track.id, s);
-                    setAudioUrls(prev => ({ ...prev, [s]: URL.createObjectURL(blob) }));
-                } catch (e) {
-                    console.error("Error loading new stem", s, e);
-                } finally {
-                    setLoadingStems(prev => ({ ...prev, [s]: false }));
-                }
-            }
-        }
-    }, [track?.id]);
-
     return {
         activeStemIds,
         audioUrls,
@@ -155,6 +146,5 @@ export const useProjectData = (track) => {
         loadingStems,
         addToPlayer,
         removeFromPlayer,
-        loadNewStems,
     };
 };
