@@ -2,6 +2,9 @@ from .ProjectService import ProjectService
 from .AudioService import AudioService
 from .FileService import FileService
 from .SSEManager import SSEManager
+from persistence import Database
+from persistence.project_repository import ProjectRepository
+from persistence.import_legacy import LegacyProjectImporter
 import os
 
 # Configuration (Could be moved to config.py)
@@ -12,6 +15,15 @@ UPLOAD_FOLDER = os.path.abspath(os.path.join(BASE_DIR, 'uploads'))
 
 # Initialize Services
 sse_manager = SSEManager()
-project_service = ProjectService(LIBRARY_FOLDER)
+database = Database(LIBRARY_FOLDER)
+database.bootstrap()
+project_repository = ProjectRepository(database)
+legacy_importer = LegacyProjectImporter(LIBRARY_FOLDER, project_repository)
+project_service = ProjectService(
+    LIBRARY_FOLDER,
+    project_repository=project_repository,
+    legacy_importer=legacy_importer,
+)
+project_service.bootstrap_sqlite_metadata()
 file_service = FileService(project_service, UPLOAD_FOLDER)
 audio_service = AudioService(project_service, file_service)
