@@ -10,6 +10,8 @@ export const useAudioPlayer = () => {
     const wsRefs = useRef({}); // Map: stemId -> WaveSurfer instance
     const isScrubbingRef = useRef(false);
     const sliderRef = useRef(false);
+    const playheadBaseTimeRef = useRef(0);
+    const playheadStartedAtRef = useRef(null);
 
     // Refs for stable callback access (avoids re-creating registerWaveSurfer)
     const currentTimeRef = useRef(currentTime);
@@ -20,31 +22,60 @@ export const useAudioPlayer = () => {
     useEffect(() => { mainVolumeRef.current = mainVolume; }, [mainVolume]);
     useEffect(() => { durationRef.current = duration; }, [duration]);
 
-    // Sync Loop
-    useEffect(() => {
-        let animationFrame;
-
-        const loop = () => {
-            if (isPlaying && !isScrubbingRef.current && !sliderRef.current) {
-                // Find a primary instance to read time from
-                const primaryId = Object.keys(wsRefs.current)[0];
-                if (primaryId && wsRefs.current[primaryId]) {
-                    const t = wsRefs.current[primaryId].getCurrentTime();
-                    // Avoid excessive state updates
-                    if (Math.abs(t - currentTimeRef.current) > 0.1) {
-                        setCurrentTime(t);
-                    }
-                }
-            }
-            animationFrame = requestAnimationFrame(loop);
-        };
-
-        if (isPlaying) {
-            loop();
+    const getClockTime = useCallback(() => {
+        if (!isPlaying || playheadStartedAtRef.current == null) {
+            return currentTimeRef.current;
         }
 
-        return () => cancelAnimationFrame(animationFrame);
+        const elapsed = (performance.now() - playheadStartedAtRef.current) / 1000;
+        const nextTime = playheadBaseTimeRef.current + elapsed;
+
+        if (durationRef.current > 0) {
+            return Math.min(nextTime, durationRef.current);
+        }
+
+        return nextTime;
     }, [isPlaying]);
+
+    const syncCurrentTime = useCallback(() => {
+        if (isScrubbingRef.current || sliderRef.current) {
+            return;
+        }
+
+        const nextTime = getClockTime();
+        if (Math.abs(nextTime - currentTimeRef.current) > 0.02) {
+            setCurrentTime(nextTime);
+        }
+    }, [getClockTime]);
+
+    useEffect(() => {
+        if (!isPlaying) {
+            return undefined;
+        }
+
+        const handleVisibilitySync = () => {
+            syncCurrentTime();
+        };
+
+        document.addEventListener('visibilitychange', handleVisibilitySync);
+        window.addEventListener('focus', handleVisibilitySync);
+        syncCurrentTime();
+
+        let animationFrame = null;
+        const loop = () => {
+            syncCurrentTime();
+            animationFrame = requestAnimationFrame(loop);
+        };
+        loop();
+
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilitySync);
+            window.removeEventListener('focus', handleVisibilitySync);
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+            }
+        };
+    }, [isPlaying, syncCurrentTime]);
 
     const registerWaveSurfer = useCallback((id, ws) => {
         if (ws) {
@@ -69,20 +100,31 @@ export const useAudioPlayer = () => {
     const togglePlay = useCallback(() => {
         setIsPlaying(prev => {
             const next = !prev;
+            if (next) {
+                playheadBaseTimeRef.current = currentTimeRef.current;
+                playheadStartedAtRef.current = performance.now();
+            } else {
+                const pausedTime = getClockTime();
+                playheadBaseTimeRef.current = pausedTime;
+                playheadStartedAtRef.current = null;
+                setCurrentTime(pausedTime);
+            }
             Object.values(wsRefs.current).forEach(ws => {
                 if (next) ws.play();
                 else ws.pause();
             });
             return next;
         });
-    }, []);
+    }, [getClockTime]);
 
     const seek = useCallback((time) => {
+        playheadBaseTimeRef.current = time;
+        playheadStartedAtRef.current = isPlaying ? performance.now() : null;
         setCurrentTime(time);
         Object.values(wsRefs.current).forEach(ws => {
             ws.setTime(time);
         });
-    }, []);
+    }, [isPlaying]);
 
     const setVolume = useCallback((vol) => {
         setMainVolume(vol);
@@ -101,7 +143,7 @@ export const useAudioPlayer = () => {
             if (isPlaying) ws.play();
             else ws.pause();
         });
-    }, [isPlaying]);
+    }, [isPlaying, syncCurrentTime]);
 
     return {
         isPlaying,

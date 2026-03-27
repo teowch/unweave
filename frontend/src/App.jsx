@@ -187,7 +187,7 @@ function App() {
     setSetupRequired(false)
   }
 
-  const refreshLibrary = async () => {
+  const refreshLibrary = useCallback(async () => {
     try {
       const data = await getHistory()
       setLibrary(data)
@@ -196,7 +196,7 @@ function App() {
       console.error('Failed to load library', err)
       return []
     }
-  }
+  }, [])
 
   useEffect(() => {
     if (setupRequired) {
@@ -205,10 +205,10 @@ function App() {
 
     let cancelled = false
 
-    getHistory()
-      .then((data) => {
-        if (!cancelled) {
-          setLibrary(data)
+    refreshLibrary()
+      .then(() => {
+        if (cancelled) {
+          return
         }
       })
       .catch((err) => {
@@ -220,7 +220,7 @@ function App() {
     return () => {
       cancelled = true
     }
-  }, [setupRequired])
+  }, [refreshLibrary, setupRequired])
 
   const handleUnify = async (trackId, selectedStems) => {
     if (!selectedStems || selectedStems.length === 0) return alert('Select stems to unify first.')
