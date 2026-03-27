@@ -6,15 +6,6 @@ from typing import List, Dict, Optional, Any
 
 from persistence.project_catalog import build_history_entry, build_project_snapshot
 
-# Assuming these are in the python path (backend root)
-try:
-    from AudioProject import AudioProject
-except ImportError:
-    # If running from inside services/ for testing
-    import sys
-    sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    from AudioProject import AudioProject
-
 
 class ProjectService:
     def __init__(
@@ -152,6 +143,33 @@ class ProjectService:
         if not snapshot:
             return None
         return snapshot["status"]
+
+    def replace_sqlite_project_snapshot(self, project_row: Dict[str, Any], file_rows: List[Dict[str, Any]]) -> None:
+        if not self.project_repository:
+            raise RuntimeError("Project repository is not configured")
+
+        self.project_repository.replace_project_snapshot(project_row, file_rows)
+        self._sync_sqlite_cache(project_row["id"])
+
+    def _sync_sqlite_cache(self, project_id: str) -> None:
+        snapshot = self.get_sqlite_project_snapshot(project_id)
+        if not snapshot:
+            return
+
+        history_entry = snapshot["history"]
+        project_path = os.path.join(self.library_folder, project_id)
+        self.track_sessions[project_id] = {
+            "path": project_path,
+            "original": snapshot["status"]["original_file"],
+        }
+
+        existing = next((item for item in self.session_history if item["id"] == project_id), None)
+        if existing:
+            existing.update(history_entry)
+        else:
+            self.session_history.insert(0, history_entry)
+
+        self.session_history.sort(key=lambda item: item["id"], reverse=True)
 
     def resolve_sqlite_file_path(self, project_id: str, filename: str) -> Optional[str]:
         snapshot = self.get_sqlite_project_snapshot(project_id)
