@@ -1,6 +1,7 @@
 import os
 import json
 import shutil
+from pathlib import Path
 from typing import List, Dict, Optional, Any
 
 from persistence.project_catalog import build_history_entry, build_project_snapshot
@@ -43,64 +44,65 @@ class ProjectService:
         found_folders = []
         for folder_name in os.listdir(self.library_folder):
             folder_path = os.path.join(self.library_folder, folder_name)
-            if os.path.isdir(folder_path):
-                try:
-                    metadata_path = os.path.join(folder_path, 'metadata.json')
+            if folder_name == '.unweave' or not os.path.isdir(folder_path):
+                continue
+            try:
+                metadata_path = os.path.join(folder_path, 'metadata.json')
 
-                    track_id = folder_name
-                    track_name = folder_name
-                    original_file = None
-                    track_date = folder_name
+                track_id = folder_name
+                track_name = folder_name
+                original_file = None
+                track_date = folder_name
 
-                    thumbnail = None
-                    if os.path.exists(metadata_path):
-                        try:
-                            with open(metadata_path, 'r') as f:
-                                meta = json.load(f)
-                                track_id = meta.get('id', folder_name)
-                                track_name = meta.get('name', folder_name)
-                                original_file = meta.get('original_file')
-                                thumbnail = meta.get('thumbnail')
-                                if 'date' in meta:
-                                    track_date = meta['date']
-                        except (json.JSONDecodeError, IOError) as e:
-                            print(f"Error reading metadata for {folder_name}: {e}")
+                thumbnail = None
+                if os.path.exists(metadata_path):
+                    try:
+                        with open(metadata_path, 'r') as f:
+                            meta = json.load(f)
+                            track_id = meta.get('id', folder_name)
+                            track_name = meta.get('name', folder_name)
+                            original_file = meta.get('original_file')
+                            thumbnail = meta.get('thumbnail')
+                            if 'date' in meta:
+                                track_date = meta['date']
+                    except (json.JSONDecodeError, IOError) as e:
+                        print(f"Error reading metadata for {folder_name}: {e}")
 
-                    stems_list = []
-                    all_audio = []
-                    for f in os.listdir(folder_path):
-                        if f.endswith('.wav') or f.endswith('.mp3') or f.endswith('.flac'):
-                            all_audio.append(f)
+                stems_list = []
+                all_audio = []
+                for f in os.listdir(folder_path):
+                    if f.endswith('.wav') or f.endswith('.mp3') or f.endswith('.flac'):
+                        all_audio.append(f)
 
-                    for f in all_audio:
-                        if original_file and f == original_file:
-                            continue
-                        stems_list.append(f)
+                for f in all_audio:
+                    if original_file and f == original_file:
+                        continue
+                    stems_list.append(f)
 
-                    stems_list = sorted(stems_list)
+                stems_list = sorted(stems_list)
 
-                    track_data = {
-                        'id': track_id,
-                        'name': track_name,
-                        'date': track_date,
-                        'stems': stems_list,
-                    }
-                    if original_file:
-                        track_data['original'] = original_file
+                track_data = {
+                    'id': track_id,
+                    'name': track_name,
+                    'date': track_date,
+                    'stems': stems_list,
+                }
+                if original_file:
+                    track_data['original'] = original_file
 
-                    if thumbnail:
-                        track_data['thumbnail'] = thumbnail
+                if thumbnail:
+                    track_data['thumbnail'] = thumbnail
 
-                    found_folders.append(track_data)
+                found_folders.append(track_data)
 
-                    self.track_sessions[track_id] = {
-                        'path': folder_path,
-                        'original': original_file
-                    }
+                self.track_sessions[track_id] = {
+                    'path': folder_path,
+                    'original': original_file
+                }
 
-                except Exception as e:
-                    print(f"Error loading {folder_name}: {e}")
-                    continue
+            except Exception as e:
+                print(f"Error loading {folder_name}: {e}")
+                continue
 
         found_folders.sort(key=lambda x: x['id'], reverse=True)
         self.session_history.extend(found_folders)
@@ -150,6 +152,34 @@ class ProjectService:
         if not snapshot:
             return None
         return snapshot["status"]
+
+    def resolve_sqlite_file_path(self, project_id: str, filename: str) -> Optional[str]:
+        snapshot = self.get_sqlite_project_snapshot(project_id)
+        if not snapshot:
+            return None
+
+        for file_row in snapshot["files"]:
+            relative_path = file_row["relative_path"]
+            if relative_path == filename or Path(relative_path).name == filename:
+                project_path = self.get_project_path(project_id)
+                if not project_path:
+                    return None
+                return os.path.join(project_path, relative_path)
+        return None
+
+    def list_sqlite_file_paths(self, project_id: str) -> List[str]:
+        snapshot = self.get_sqlite_project_snapshot(project_id)
+        if not snapshot:
+            return []
+
+        project_path = self.get_project_path(project_id)
+        if not project_path:
+            return []
+
+        return [
+            os.path.join(project_path, file_row["relative_path"])
+            for file_row in snapshot["files"]
+        ]
 
     def get_history(self) -> List[Dict[str, Any]]:
         return self.session_history
