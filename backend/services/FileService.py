@@ -1,10 +1,28 @@
 import os
 import zipfile
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import List, Optional
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class FileResolution:
+    project_id: str
+    filename: str
+    status: str
+    path: Optional[str] = None
+    relative_path: Optional[str] = None
+
+
+class ConsistencyRepairRequired(RuntimeError):
+    def __init__(self, project_id: str, filename: str, relative_path: Optional[str] = None):
+        self.project_id = project_id
+        self.filename = filename
+        self.relative_path = relative_path or filename
+        super().__init__(f"Consistency repair required for {project_id}:{self.relative_path}")
 
 
 class FileService:
@@ -14,14 +32,49 @@ class FileService:
         os.makedirs(self.upload_folder, exist_ok=True)
         self.cleanup_upload_folder()
 
-    def get_file_path(self, project_id: str, filename: str) -> Optional[str]:
-        file_path = self.project_service.resolve_sqlite_file_path(project_id, filename)
-        if not file_path:
-            return None
+    def resolve_file(self, project_id: str, filename: str) -> FileResolution:
+        file_ref = self.project_service.resolve_sqlite_file(project_id, filename)
+        if not file_ref:
+            return FileResolution(project_id=project_id, filename=filename, status="not_tracked")
 
-        if os.path.exists(file_path):
-            return file_path
+        if os.path.exists(file_ref["path"]):
+            return FileResolution(
+                project_id=project_id,
+                filename=filename,
+                status="ready",
+                path=file_ref["path"],
+                relative_path=file_ref["relative_path"],
+            )
+
+        return FileResolution(
+            project_id=project_id,
+            filename=filename,
+            status="tracked_missing",
+            path=file_ref["path"],
+            relative_path=file_ref["relative_path"],
+        )
+
+    def repair_tracked_file(self, project_id: str, filename: str) -> FileResolution:
+        resolution = self.resolve_file(project_id, filename)
+        if resolution.status != "tracked_missing":
+            return resolution
+
+        self.project_service.repair_sqlite_project(project_id)
+        return self.resolve_file(project_id, filename)
+
+    def get_file_path(self, project_id: str, filename: str) -> Optional[str]:
+        resolution = self.resolve_file(project_id, filename)
+        if resolution.status == "ready":
+            return resolution.path
         return None
+
+    def require_file_path(self, project_id: str, filename: str) -> str:
+        resolution = self.resolve_file(project_id, filename)
+        if resolution.status == "ready":
+            return resolution.path
+        if resolution.status == "tracked_missing":
+            raise ConsistencyRepairRequired(project_id, filename, resolution.relative_path)
+        raise FileNotFoundError(filename)
 
     def create_zip(self, project_id: str, selected_tracks: List[str] = None) -> str:
         """
@@ -39,13 +92,19 @@ class FileService:
         with zipfile.ZipFile(zip_path, 'w') as zipf:
             if selected_tracks:
                 for name in selected_tracks:
-                    file_path = self.get_file_path(project_id, name)
-                    if file_path:
-                        zipf.write(file_path, Path(file_path).name)
+                    file_path = self.require_file_path(project_id, name)
+                    zipf.write(file_path, Path(file_path).name)
             else:
-                for file_path in self.project_service.list_sqlite_file_paths(project_id):
-                    if os.path.exists(file_path):
-                        zipf.write(file_path, Path(file_path).name)
+                snapshot = self.project_service.get_sqlite_project_snapshot(project_id)
+                if not snapshot:
+                    raise FileNotFoundError("Project not found")
+
+                for file_row in snapshot["files"]:
+                    resolution = self.resolve_file(project_id, file_row["relative_path"])
+                    if resolution.status == "tracked_missing":
+                        raise ConsistencyRepairRequired(project_id, file_row["relative_path"], resolution.relative_path)
+                    if resolution.status == "ready":
+                        zipf.write(resolution.path, Path(resolution.path).name)
 
         return zip_path
 

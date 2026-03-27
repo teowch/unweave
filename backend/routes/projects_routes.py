@@ -1,9 +1,27 @@
 from flask import Blueprint, jsonify, request, send_file, after_this_request
-from services.container import project_service, file_service
+from services.container import project_service, file_service, sse_manager
+from services.FileService import ConsistencyRepairRequired
 from utils.waveform import precompute_waveform
 import os
 
 projects_bp = Blueprint('projects', __name__)
+
+
+def _start_project_repair(project_id, resolution, message):
+    state = project_service.start_project_repair(
+        project_id,
+        reason="tracked_file_missing",
+        missing_relative_path=resolution.relative_path,
+        sse_manager=sse_manager,
+    )
+    return jsonify({
+        "status": "consistency_checking",
+        "consistency_checking": True,
+        "project_id": project_id,
+        "missing_file": resolution.relative_path or resolution.filename,
+        "message": message,
+        "repair_state": state["status"],
+    }), 409
 
 @projects_bp.route('/waveform/<project_id>/<stem_name>', methods=['GET'])
 def get_waveform(project_id, stem_name):
@@ -16,16 +34,32 @@ def get_waveform(project_id, stem_name):
     if not project_path:
         return jsonify({'error': 'Project not found'}), 404
 
-    stem_path = file_service.get_file_path(project_id, stem_name)
-    if not stem_path:
+    stem_resolution = file_service.resolve_file(project_id, stem_name)
+    if stem_resolution.status == "not_tracked":
         return jsonify({'error': 'Stem file not found'}), 404
+    if stem_resolution.status == "tracked_missing":
+        return _start_project_repair(
+            project_id,
+            stem_resolution,
+            'A tracked project file is missing on disk. Consistency is being verified and this page will reload when ready.',
+        )
 
     stem_base = os.path.splitext(stem_name)[0]
     waveform_path = os.path.join(project_path, 'waveforms', f"{stem_base}.json")
+    waveform_resolution = file_service.resolve_file(project_id, os.path.join('waveforms', f"{stem_base}.json"))
 
-    if not os.path.exists(waveform_path):
+    if waveform_resolution.status == "tracked_missing":
         try:
-            precompute_waveform(stem_path, waveform_path)
+            precompute_waveform(stem_resolution.path, waveform_path)
+        except Exception:
+            return _start_project_repair(
+                project_id,
+                waveform_resolution,
+                'A tracked waveform file is missing on disk. Consistency is being verified and this page will reload when ready.',
+            )
+    elif not os.path.exists(waveform_path):
+        try:
+            precompute_waveform(stem_resolution.path, waveform_path)
         except Exception as e:
             return jsonify({'error': f'Waveform computation failed: {e}'}), 500
 
@@ -65,11 +99,17 @@ def delete_session(folder_id):
 
 @projects_bp.route('/download/<folder_id>/<filename>', methods=['GET'])
 def download_file(folder_id, filename):
-    path = file_service.get_file_path(folder_id, filename)
-    if not path:
+    resolution = file_service.resolve_file(folder_id, filename)
+    if resolution.status == "not_tracked":
         return jsonify({'error': 'File not found'}), 404
+    if resolution.status == "tracked_missing":
+        return _start_project_repair(
+            folder_id,
+            resolution,
+            'A tracked project file is missing on disk. Consistency is being verified and this page will reload when ready.',
+        )
 
-    return send_file(path, as_attachment=False)
+    return send_file(resolution.path, as_attachment=False)
 
 @projects_bp.route('/zip/<folder_id>', methods=['GET'])
 def download_zip(folder_id):
@@ -82,6 +122,15 @@ def download_zip(folder_id):
             return response
 
         return send_file(zip_path, as_attachment=True)
+    except ConsistencyRepairRequired as exc:
+        resolution = file_service.resolve_file(exc.project_id, exc.relative_path)
+        if resolution.status == "tracked_missing":
+            return _start_project_repair(
+                exc.project_id,
+                resolution,
+                'A tracked project file is missing on disk. Consistency is being verified and this page will reload when ready.',
+            )
+        return jsonify({'error': str(exc)}), 409
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
@@ -102,5 +151,14 @@ def download_zip_selected():
             return response
 
         return send_file(zip_path, as_attachment=True)
+    except ConsistencyRepairRequired as exc:
+        resolution = file_service.resolve_file(exc.project_id, exc.relative_path)
+        if resolution.status == "tracked_missing":
+            return _start_project_repair(
+                exc.project_id,
+                resolution,
+                'A tracked project file is missing on disk. Consistency is being verified and this page will reload when ready.',
+            )
+        return jsonify({'error': str(exc)}), 409
     except Exception as e:
         return jsonify({'error': str(e)}), 500

@@ -1,10 +1,12 @@
 import os
 import json
 import shutil
+import threading
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 
 from persistence.project_catalog import build_history_entry, build_project_snapshot
+from persistence.import_legacy import collect_project_file_rows
 
 
 class ProjectService:
@@ -19,6 +21,8 @@ class ProjectService:
         self.legacy_importer = legacy_importer
         self.track_sessions: Dict[str, Dict[str, Any]] = {}
         self.session_history: List[Dict[str, Any]] = []
+        self._repair_lock = threading.Lock()
+        self._repair_state: Dict[str, Dict[str, Any]] = {}
 
         os.makedirs(self.library_folder, exist_ok=True)
         self.refresh_history()
@@ -172,6 +176,12 @@ class ProjectService:
         self.session_history.sort(key=lambda item: item["id"], reverse=True)
 
     def resolve_sqlite_file_path(self, project_id: str, filename: str) -> Optional[str]:
+        resolution = self.resolve_sqlite_file(project_id, filename)
+        if not resolution:
+            return None
+        return resolution["path"]
+
+    def resolve_sqlite_file(self, project_id: str, filename: str) -> Optional[Dict[str, Any]]:
         snapshot = self.get_sqlite_project_snapshot(project_id)
         if not snapshot:
             return None
@@ -182,7 +192,13 @@ class ProjectService:
                 project_path = self.get_project_path(project_id)
                 if not project_path:
                     return None
-                return os.path.join(project_path, relative_path)
+                return {
+                    "project_id": project_id,
+                    "project_path": project_path,
+                    "path": os.path.join(project_path, relative_path),
+                    "relative_path": relative_path,
+                    "file": file_row,
+                }
         return None
 
     def list_sqlite_file_paths(self, project_id: str) -> List[str]:
@@ -198,6 +214,97 @@ class ProjectService:
             os.path.join(project_path, file_row["relative_path"])
             for file_row in snapshot["files"]
         ]
+
+    def repair_sqlite_project(self, project_id: str) -> Optional[Dict[str, Any]]:
+        project_row = self.get_sqlite_project(project_id)
+        if not project_row:
+            return None
+
+        project_path = self.get_project_path(project_id)
+        if not project_path or not os.path.isdir(project_path):
+            return None
+
+        file_rows = collect_project_file_rows(project_id, project_path)
+        self.replace_sqlite_project_snapshot(project_row, file_rows)
+
+        return {
+            "project": project_row,
+            "files": file_rows,
+            "project_path": project_path,
+        }
+
+    def get_project_repair_state(self, project_id: str) -> Optional[Dict[str, Any]]:
+        with self._repair_lock:
+            state = self._repair_state.get(project_id)
+            return dict(state) if state else None
+
+    def start_project_repair(
+        self,
+        project_id: str,
+        *,
+        reason: Optional[str] = None,
+        missing_relative_path: Optional[str] = None,
+        sse_manager=None,
+    ) -> Dict[str, Any]:
+        with self._repair_lock:
+            existing = self._repair_state.get(project_id)
+            if existing and existing.get("status") == "running":
+                return dict(existing)
+
+            state = {
+                "project_id": project_id,
+                "status": "running",
+                "reason": reason or "tracked_file_missing",
+                "missing_relative_path": missing_relative_path,
+            }
+            self._repair_state[project_id] = state
+
+        worker = threading.Thread(
+            target=self._run_project_repair,
+            args=(project_id, reason, missing_relative_path, sse_manager),
+            daemon=True,
+        )
+        worker.start()
+        return dict(state)
+
+    def _run_project_repair(self, project_id: str, reason: Optional[str], missing_relative_path: Optional[str], sse_manager=None) -> None:
+        payload = {
+            "project_id": project_id,
+            "status": "consistency_checking",
+            "reason": reason or "tracked_file_missing",
+            "missing_relative_path": missing_relative_path,
+        }
+
+        if sse_manager:
+            sse_manager.create(project_id)
+            sse_manager.publish(project_id, "repair_started", payload)
+
+        try:
+            result = self.repair_sqlite_project(project_id)
+            if result is None:
+                raise FileNotFoundError(f"Project {project_id} could not be repaired")
+
+            completed = {
+                **payload,
+                "status": "consistency_ready",
+                "file_count": len(result["files"]),
+            }
+            with self._repair_lock:
+                self._repair_state[project_id] = completed
+
+            if sse_manager:
+                sse_manager.publish(project_id, "repair_completed", completed)
+        except Exception as exc:
+            failed = {
+                **payload,
+                "status": "consistency_failed",
+                "message": str(exc),
+            }
+            with self._repair_lock:
+                self._repair_state[project_id] = failed
+
+            if sse_manager:
+                sse_manager.publish(project_id, "repair_failed", failed)
 
     def get_history(self) -> List[Dict[str, Any]]:
         return self.session_history

@@ -21,6 +21,9 @@ import { SSE_BASE } from './api';
  * @param {Function} handlers.onIdChanged - Called with { new_id } when project ID changes
  * @param {Function} handlers.onError - Called with { module, status, message } on error
  * @param {Function} handlers.onDone - Called when stream is complete
+ * @param {Function} handlers.onRepairStarted - Called with repair lifecycle payload when consistency repair starts
+ * @param {Function} handlers.onRepairCompleted - Called with repair lifecycle payload when consistency repair finishes
+ * @param {Function} handlers.onRepairFailed - Called with repair lifecycle payload when consistency repair fails
  * @param {Function} handlers.onConnectionError - Called when SSE connection fails
  * @returns {Object} Controller with { close, reconnect }
  */
@@ -40,8 +43,25 @@ export function createSSEConnection(jobId, handlers = {}) {
         onIdChanged,
         onError,
         onDone,
+        onRepairStarted,
+        onRepairCompleted,
+        onRepairFailed,
         onConnectionError
     } = handlers;
+
+    const handleJsonEvent = (eventName, callback) => {
+        eventSource.addEventListener(eventName, (event) => {
+            retryCount = 0;
+            try {
+                const data = JSON.parse(event.data);
+                if (callback) {
+                    callback(data);
+                }
+            } catch (e) {
+                console.error(`Failed to parse ${eventName} event:`, e);
+            }
+        });
+    };
 
     function connect(id) {
         if (closed) return; // Don't connect if explicitly closed
@@ -56,47 +76,17 @@ export function createSSEConnection(jobId, handlers = {}) {
         currentJobId = id;
 
         // Handle download progress events
-        eventSource.addEventListener('download', (event) => {
-            retryCount = 0; // Reset retry count on successful event
-            try {
-                const data = JSON.parse(event.data);
-                if (onDownloadProgress) {
-                    onDownloadProgress(data);
-                }
-            } catch (e) {
-                console.error('Failed to parse download event:', e);
-            }
-        });
+        handleJsonEvent('download', onDownloadProgress);
 
         // Handle module processing events
-        eventSource.addEventListener('module_processing', (event) => {
-            retryCount = 0; // Reset retry count on successful event
-            try {
-                const data = JSON.parse(event.data);
-                if (onModuleProgress) {
-                    onModuleProgress(data);
-                }
-            } catch (e) {
-                console.error('Failed to parse module_processing event:', e);
-            }
-        });
+        handleJsonEvent('module_processing', onModuleProgress);
 
         // Handle model downloading events
-        eventSource.addEventListener('model_downloading', (event) => {
-            retryCount = 0; // Reset retry count on successful event
-            try {
-                const data = JSON.parse(event.data);
-                if (onModelDownloading) {
-                    onModelDownloading(data);
-                }
-            } catch (e) {
-                console.error('Failed to parse model_downloading event:', e);
-            }
-        });
+        handleJsonEvent('model_downloading', onModelDownloading);
 
         // Handle project ID change events - reconnect to new ID
         eventSource.addEventListener('id_changed', (event) => {
-            retryCount = 0; // Reset retry count on successful event
+            retryCount = 0;
             try {
                 const data = JSON.parse(event.data);
                 if (onIdChanged) {
@@ -110,6 +100,10 @@ export function createSSEConnection(jobId, handlers = {}) {
                 console.error('Failed to parse id_changed event:', e);
             }
         });
+
+        handleJsonEvent('repair_started', onRepairStarted);
+        handleJsonEvent('repair_completed', onRepairCompleted);
+        handleJsonEvent('repair_failed', onRepairFailed);
 
         // Handle error events from the backend
         eventSource.addEventListener('error', (event) => {

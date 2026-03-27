@@ -2,7 +2,9 @@ import os
 from pathlib import Path
 
 from persistence import Database
+from persistence.import_legacy import collect_project_file_rows
 from persistence.project_repository import ProjectRepository
+from services.ProjectService import ProjectService
 
 
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
@@ -79,3 +81,72 @@ def test_import_does_not_store_absolute_roots(library_root):
     assert files[0]["role"] == "audio"
     assert ":/" not in files[0]["relative_path"]
     assert ":\\" not in files[0]["relative_path"]
+
+
+def test_collect_project_file_rows_classifies_rescanned_project_snapshot(library_root):
+    project_path = library_root / "project-gamma"
+    create_legacy_project(
+        project_path,
+        files={
+            "mix.wav": "audio",
+            "stems/drums.htdemucs_6s.flac": "stem",
+            "waveforms/drums.htdemucs_6s.json": "{}",
+            "docs/readme.txt": "notes",
+        },
+    )
+
+    file_rows = collect_project_file_rows("project-gamma", project_path)
+
+    assert file_rows == [
+        {"project_id": "project-gamma", "relative_path": "docs/readme.txt", "role": "other"},
+        {"project_id": "project-gamma", "relative_path": "mix.wav", "role": "audio"},
+        {"project_id": "project-gamma", "relative_path": "stems/drums.htdemucs_6s.flac", "role": "audio"},
+        {"project_id": "project-gamma", "relative_path": "waveforms/drums.htdemucs_6s.json", "role": "waveform"},
+    ]
+
+
+def test_project_repair_replaces_only_the_affected_project_snapshot(library_root):
+    project_alpha = library_root / "project-alpha"
+    create_legacy_project(
+        project_alpha,
+        files={
+            "song.wav": "audio",
+            "stems/vocals.htdemucs_6s.flac": "stem",
+        },
+    )
+
+    project_beta = library_root / "project-beta"
+    create_legacy_project(
+        project_beta,
+        files={
+            "other.wav": "audio",
+        },
+    )
+
+    repository = ProjectRepository(Database(str(library_root)))
+    repository.replace_project_snapshot(
+        {"id": "project-alpha", "name": "Alpha", "date": "2026-03-27", "thumbnail": None},
+        [
+            {"project_id": "project-alpha", "relative_path": "song.wav", "role": "audio"},
+            {"project_id": "project-alpha", "relative_path": "ghost.flac", "role": "audio"},
+        ],
+    )
+    repository.replace_project_snapshot(
+        {"id": "project-beta", "name": "Beta", "date": "2026-03-27", "thumbnail": None},
+        [
+            {"project_id": "project-beta", "relative_path": "other.wav", "role": "audio"},
+        ],
+    )
+
+    service = ProjectService(str(library_root), project_repository=repository)
+
+    result = service.repair_sqlite_project("project-alpha")
+
+    assert result is not None
+    assert {row["relative_path"] for row in repository.list_project_files("project-alpha")} == {
+        "song.wav",
+        "stems/vocals.htdemucs_6s.flac",
+    }
+    assert {row["relative_path"] for row in repository.list_project_files("project-beta")} == {
+        "other.wav",
+    }

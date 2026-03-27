@@ -1,6 +1,15 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { downloadStem, getWaveform, isElectron, getStemAudioUrl } from '../services/api';
 
+const isConsistencyError = (error) => {
+    const status = error?.response?.status;
+    const payload = error?.response?.data || {};
+    return status === 409
+        || status === 423
+        || payload.consistency_checking === true
+        || payload.status === 'consistency_checking';
+};
+
 /**
  * useProjectData — manages stem state for the Editor.
  *
@@ -10,7 +19,8 @@ import { downloadStem, getWaveform, isElectron, getStemAudioUrl } from '../servi
  *   2. Audio blobs are ALSO loaded eagerly in background for playback readiness.
  *   3. Peaks render immediately; audio arrives shortly after for playback.
  */
-export const useProjectData = (track) => {
+export const useProjectData = (track, options = {}) => {
+    const { onConsistencyIssue } = options;
     const [activeStemIds, setActiveStemIds] = useState([]);
     const [audioUrls, setAudioUrls] = useState({});
     const [waveformPeaks, setWaveformPeaks] = useState({});   // stem -> peaks data
@@ -23,6 +33,7 @@ export const useProjectData = (track) => {
 
     // Ref to always hold the latest blob URLs for proper cleanup
     const audioUrlsRef = useRef({});
+    const consistencyReportedRef = useRef(false);
 
     // Keep the ref in sync with state
     useEffect(() => {
@@ -38,6 +49,7 @@ export const useProjectData = (track) => {
         setActiveStemIds(prev => prev.filter(stem => trackFiles.includes(stem)));
         setAudioUrls({});
         setWaveformPeaks({});
+        consistencyReportedRef.current = false;
 
         if (!track) return;
 
@@ -51,6 +63,13 @@ export const useProjectData = (track) => {
                         const data = await getWaveform(track.id, s);
                         return { stem: s, data };
                     } catch (e) {
+                        if (isConsistencyError(e) && !consistencyReportedRef.current) {
+                            consistencyReportedRef.current = true;
+                            onConsistencyIssue?.(
+                                e.response?.data?.message
+                                || 'We found an inconsistency while loading this project. Consistency is being verified and this page will reload when ready.'
+                            );
+                        }
                         console.warn(`Waveform not available for ${s}:`, e.message);
                         return { stem: s, data: null };
                     }
@@ -83,6 +102,14 @@ export const useProjectData = (track) => {
                         const blob = await downloadStem(track.id, s);
                         setAudioUrls(prev => ({ ...prev, [s]: URL.createObjectURL(blob) }));
                     } catch (e) {
+                        if (isConsistencyError(e) && !consistencyReportedRef.current) {
+                            consistencyReportedRef.current = true;
+                            onConsistencyIssue?.(
+                                e.response?.data?.message
+                                || 'We found an inconsistency while loading this project. Consistency is being verified and this page will reload when ready.'
+                            );
+                            break;
+                        }
                         console.error("Error loading stem", s, e);
                     } finally {
                         setLoadingStems(prev => ({ ...prev, [s]: false }));
@@ -102,7 +129,7 @@ export const useProjectData = (track) => {
                 Object.values(audioUrlsRef.current).forEach(u => URL.revokeObjectURL(u));
             }
         };
-    }, [track, trackFiles, trackSignature]);
+    }, [track, trackFiles, trackSignature, onConsistencyIssue]);
 
     const addToPlayer = useCallback((stem) => {
         setActiveStemIds(prev => prev.includes(stem) ? prev : [...prev, stem]);

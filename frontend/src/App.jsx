@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
 import { getHistory, getProject, isElectron, unifyStems } from './services/api'
+import { createSSEConnection } from './services/sse'
 import './App.css'
 
 import Sidebar from './components/Sidebar/Sidebar'
@@ -42,11 +43,20 @@ const EditorRoute = ({ onUnify, onProjectUpdated }) => {
   const [notFound, setNotFound] = useState(false)
   const [consistencyMessage, setConsistencyMessage] = useState(null)
   const retryTimeoutRef = useRef(null)
+  const repairSseRef = useRef(null)
+  const defaultConsistencyMessage = 'We found an inconsistency while loading this project. Consistency is being verified and this page will reload when ready.'
 
   const clearRetry = () => {
     if (retryTimeoutRef.current) {
       window.clearTimeout(retryTimeoutRef.current)
       retryTimeoutRef.current = null
+    }
+  }
+
+  const closeRepairListener = () => {
+    if (repairSseRef.current) {
+      repairSseRef.current.close()
+      repairSseRef.current = null
     }
   }
 
@@ -70,11 +80,8 @@ const EditorRoute = ({ onUnify, onProjectUpdated }) => {
       if (isConsistencyRetryable(err)) {
         setConsistencyMessage(
           err.response?.data?.message
-          || 'We found an inconsistency while loading this project. Consistency is being verified and this page will reload when ready.'
+          || defaultConsistencyMessage
         )
-        retryTimeoutRef.current = window.setTimeout(() => {
-          loadProject({ silent: true })
-        }, CONSISTENCY_RETRY_MS)
         return null
       }
 
@@ -87,15 +94,55 @@ const EditorRoute = ({ onUnify, onProjectUpdated }) => {
         setLoadingProject(false)
       }
     }
-  }, [id, onProjectUpdated])
+  }, [defaultConsistencyMessage, id, onProjectUpdated])
+
+  const handleConsistencyIssue = useCallback((message) => {
+    setConsistencyMessage(message || defaultConsistencyMessage)
+  }, [defaultConsistencyMessage])
 
   useEffect(() => {
     loadProject()
 
     return () => {
       clearRetry()
+      closeRepairListener()
     }
   }, [loadProject])
+
+  useEffect(() => {
+    closeRepairListener()
+    clearRetry()
+
+    if (!consistencyMessage) {
+      return undefined
+    }
+
+    repairSseRef.current = createSSEConnection(id, {
+      onRepairStarted: (data) => {
+        if (data?.message) {
+          setConsistencyMessage(data.message)
+        }
+      },
+      onRepairCompleted: () => {
+        loadProject({ silent: true })
+      },
+      onRepairFailed: (data) => {
+        setConsistencyMessage(
+          data?.message
+          || 'Consistency verification failed. Please retry loading this project.'
+        )
+      },
+    })
+
+    retryTimeoutRef.current = window.setTimeout(() => {
+      loadProject({ silent: true })
+    }, CONSISTENCY_RETRY_MS)
+
+    return () => {
+      clearRetry()
+      closeRepairListener()
+    }
+  }, [consistencyMessage, id, loadProject])
 
   if (loadingProject) return <div className="loader"></div>
   if (consistencyMessage) {
@@ -115,6 +162,7 @@ const EditorRoute = ({ onUnify, onProjectUpdated }) => {
       track={track}
       onBack={() => navigate('/library')}
       onProjectRefresh={() => loadProject({ silent: true })}
+      onConsistencyIssue={handleConsistencyIssue}
       onUnify={onUnify}
     />
   )

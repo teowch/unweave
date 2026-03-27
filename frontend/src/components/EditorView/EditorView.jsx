@@ -8,7 +8,7 @@ import './EditorView.css';
 
 import { ArrowLeftIcon } from '../common/Icons';
 
-const EditorView = ({ track, onBack, onProjectRefresh }) => {
+const EditorView = ({ track, onBack, onProjectRefresh, onConsistencyIssue }) => {
     // --- Custom Hooks ---
     const {
         isPlaying,
@@ -28,7 +28,7 @@ const EditorView = ({ track, onBack, onProjectRefresh }) => {
         waveformPeaks,
         addToPlayer,
         removeFromPlayer,
-    } = useProjectData(track);
+    } = useProjectData(track, { onConsistencyIssue });
 
     // --- UI State (Mixer settings) ---
     // This state belongs here as it's the "Edit" session state

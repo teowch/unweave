@@ -5,6 +5,41 @@ from pathlib import Path
 AUDIO_EXTENSIONS = {".wav", ".mp3", ".flac"}
 
 
+def classify_relative_path(relative_path):
+    relative_path = Path(relative_path)
+
+    if relative_path.suffix.lower() in AUDIO_EXTENSIONS:
+        return "audio"
+
+    if relative_path.suffix.lower() == ".json" and "waveforms" in relative_path.parts:
+        return "waveform"
+
+    return "other"
+
+
+def collect_project_file_rows(project_id, folder_path):
+    folder_path = Path(folder_path)
+    file_rows = []
+
+    for file_path in sorted(folder_path.rglob("*")):
+        if not file_path.is_file():
+            continue
+
+        relative_path = file_path.relative_to(folder_path)
+        if relative_path.as_posix() == "metadata.json":
+            continue
+
+        file_rows.append(
+            {
+                "project_id": project_id,
+                "relative_path": relative_path.as_posix(),
+                "role": classify_relative_path(relative_path),
+            }
+        )
+
+    return file_rows
+
+
 class LegacyProjectImporter:
     def __init__(self, library_folder, project_repository):
         self.library_folder = Path(library_folder)
@@ -36,23 +71,7 @@ class LegacyProjectImporter:
             "date": metadata.get("date") or project_id,
             "thumbnail": metadata.get("thumbnail"),
         }
-
-        file_rows = []
-        for file_path in sorted(folder_path.rglob("*")):
-            if not file_path.is_file():
-                continue
-
-            relative_path = file_path.relative_to(folder_path)
-            if relative_path.as_posix() == "metadata.json":
-                continue
-
-            file_rows.append(
-                {
-                    "project_id": project_id,
-                    "relative_path": relative_path.as_posix(),
-                    "role": self._classify_role(relative_path),
-                }
-            )
+        file_rows = collect_project_file_rows(project_id, folder_path)
 
         self.project_repository.replace_project_snapshot(project_row, file_rows)
 
@@ -69,10 +88,4 @@ class LegacyProjectImporter:
         return data if isinstance(data, dict) else {}
 
     def _classify_role(self, relative_path):
-        if relative_path.suffix.lower() in AUDIO_EXTENSIONS:
-            return "audio"
-
-        if relative_path.suffix.lower() == ".json" and "waveforms" in relative_path.parts:
-            return "waveform"
-
-        return "other"
+        return classify_relative_path(relative_path)
