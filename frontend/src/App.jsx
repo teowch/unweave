@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { getActiveJob, getHistory, getProject, isElectron, unifyStems } from './services/api'
 import { createSSEConnection } from './services/sse'
 import './App.css'
@@ -13,6 +13,8 @@ import SettingsView from './components/SettingsView/SettingsView'
 import SetupView from './components/SetupView/SetupView'
 import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
+import CurrentProcessing from './components/CurrentProcessing/CurrentProcessing'
+import ProcessingToast from './components/ProcessingToast/ProcessingToast'
 
 const CONSISTENCY_RETRY_MS = 1500
 
@@ -222,6 +224,8 @@ const EditorRoute = ({ onUnify, onProjectUpdated }) => {
 }
 
 function App() {
+  const location = useLocation()
+  const navigate = useNavigate()
   const [library, setLibrary] = useState([])
   const [activeJob, setActiveJob] = useState(null)
   const [lastCompletedJob, setLastCompletedJob] = useState(null)
@@ -249,6 +253,12 @@ function App() {
     setActiveJob(null)
     setLastCompletedJob(job)
 
+    if (location.pathname === '/split') {
+      setProcessingToast(null)
+      navigate(`/library/${job.projectId}`)
+      return
+    }
+
     if (completionToastKeyRef.current === job.jobId) {
       return
     }
@@ -259,7 +269,7 @@ function App() {
       projectId: job.projectId,
       projectName: job.projectName,
     })
-  }, [])
+  }, [location.pathname, navigate])
 
   const updateActiveJob = useCallback((updater) => {
     setActiveJob((current) => {
@@ -472,6 +482,24 @@ function App() {
 
   const hasGlobalProcessingState = Boolean(activeJob || lastCompletedJob || processingToast)
 
+  const handleOpenActiveProcessing = useCallback(() => {
+    navigate('/split')
+  }, [navigate])
+
+  const handleOpenCompletedProject = () => {
+    if (!lastCompletedJob?.projectId) {
+      return
+    }
+
+    setProcessingToast(null)
+    navigate(`/library/${lastCompletedJob.projectId}`)
+  }
+
+  const handleDismissCompletedState = useCallback(() => {
+    setLastCompletedJob(null)
+    setProcessingToast(null)
+  }, [])
+
   const handleUnify = async (trackId, selectedStems) => {
     if (!selectedStems || selectedStems.length === 0) return alert('Select stems to unify first.')
 
@@ -500,18 +528,32 @@ function App() {
       <div className="app-container">
         <Sidebar />
         <main className="main-content" data-processing-state={hasGlobalProcessingState ? 'active' : 'idle'}>
-          <Routes>
-            <Route path="/" element={<Navigate to="/split" replace />} />
-            <Route path="/split" element={<UploadView onUploadSuccess={refreshLibrary} />} />
-            <Route path="/library" element={<LibraryView items={library} refresh={refreshLibrary} />} />
-            <Route path="/library/:id" element={<EditorRoute onUnify={handleUnify} onProjectUpdated={refreshLibrary} />} />
-            <Route path="/models" element={<ModelsView />} />
-            <Route path="/settings" element={<SettingsView />} />
-            <Route path="/setup" element={<SetupView onSetupComplete={handleSetupComplete} />} />
-            <Route path="*" element={<NotFound />} />
-          </Routes>
+          <CurrentProcessing
+            activeJob={activeJob}
+            finishedJob={lastCompletedJob}
+            onOpenActive={handleOpenActiveProcessing}
+            onOpenFinished={handleOpenCompletedProject}
+            onDismissFinished={handleDismissCompletedState}
+          />
+          <div className="main-route-content">
+            <Routes>
+              <Route path="/" element={<Navigate to="/split" replace />} />
+              <Route path="/split" element={<UploadView onUploadSuccess={refreshLibrary} />} />
+              <Route path="/library" element={<LibraryView items={library} refresh={refreshLibrary} />} />
+              <Route path="/library/:id" element={<EditorRoute onUnify={handleUnify} onProjectUpdated={refreshLibrary} />} />
+              <Route path="/models" element={<ModelsView />} />
+              <Route path="/settings" element={<SettingsView />} />
+              <Route path="/setup" element={<SetupView onSetupComplete={handleSetupComplete} />} />
+              <Route path="*" element={<NotFound />} />
+            </Routes>
+          </div>
         </main>
       </div>
+      <ProcessingToast
+        job={processingToast}
+        onOpenProject={handleOpenCompletedProject}
+        onDismiss={handleDismissCompletedState}
+      />
     </ContextMenuProvider>
   )
 }
