@@ -538,7 +538,7 @@ function App() {
           <div className="main-route-content">
             <Routes>
               <Route path="/" element={<Navigate to="/split" replace />} />
-              <Route path="/split" element={<UploadView onUploadSuccess={refreshLibrary} />} />
+              <Route path="/split" element={<UploadView onUploadSuccess={refreshLibrary} activeJob={activeJob} />} />
               <Route path="/library" element={<LibraryView items={library} refresh={refreshLibrary} />} />
               <Route path="/library/:id" element={<EditorRoute onUnify={handleUnify} onProjectUpdated={refreshLibrary} />} />
               <Route path="/models" element={<ModelsView />} />

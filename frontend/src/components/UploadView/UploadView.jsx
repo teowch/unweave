@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { processFile, processUrl, getModules } from '../../services/api';
 import { createSSEConnection } from '../../services/sse';
 import ProgressBar from '../common/ProgressBar';
 import './UploadView.css';
 
-const UploadView = ({ onUploadSuccess }) => {
-    const navigate = useNavigate();
+const UploadView = ({ onUploadSuccess, activeJob }) => {
     const [mode, setMode] = useState('file'); // 'file' | 'url'
     const [file, setFile] = useState(null);
     const [url, setUrl] = useState('');
@@ -20,11 +18,17 @@ const UploadView = ({ onUploadSuccess }) => {
 
     // SSE and progress state
     const sseRef = useRef(null);
-    const finalProjectIdRef = useRef(null);
     const [downloadProgress, setDownloadProgress] = useState(null); // { percentage, status }
     const [modelDownloading, setModelDownloading] = useState(null); // { model, status, progress }
     const [moduleProgress, setModuleProgress] = useState({}); // { moduleId: { percentage, status, dependencyName } }
 
+    const displayedDownloadProgress = activeJob?.downloadProgress ?? downloadProgress;
+    const displayedModelDownloading = activeJob?.modelDownloading ?? modelDownloading;
+    const displayedModuleProgress = activeJob?.moduleProgress ?? moduleProgress;
+    const displayedError = activeJob?.state === 'failed'
+        ? activeJob.statusText || error
+        : error;
+    const isProcessingActive = Boolean(activeJob) || isLoading;
 
     // Fetch modules on mount
     useEffect(() => {
@@ -32,7 +36,6 @@ const UploadView = ({ onUploadSuccess }) => {
             try {
                 const data = await getModules();
                 setModules(data.modules || []);
-                // Select all modules by default
                 const allModuleIds = (data.modules || []).map(m => m.id);
                 setSelectedModules(new Set(allModuleIds));
             } catch (err) {
@@ -51,12 +54,10 @@ const UploadView = ({ onUploadSuccess }) => {
         };
     }, []);
 
-    // Get all children of a module
     const getChildren = (moduleId) => {
         return modules.filter(m => m.dependsOn === moduleId).map(m => m.id);
     };
 
-    // Get all descendants of a module (recursive)
     const getAllDescendants = (moduleId) => {
         const children = getChildren(moduleId);
         const descendants = [...children];
@@ -66,7 +67,6 @@ const UploadView = ({ onUploadSuccess }) => {
         return descendants;
     };
 
-    //Get all ancestors of a module (recursive)
     const getAllAncestors = (moduleId) => {
         const module = modules.find(m => m.id === moduleId);
         if (!module || !module.dependsOn) return [];
@@ -75,18 +75,15 @@ const UploadView = ({ onUploadSuccess }) => {
         return ancestors;
     };
 
-    // Handle checkbox change with hierarchical logic
     const handleModuleToggle = (moduleId) => {
         setSelectedModules(prev => {
             const newSelected = new Set(prev);
 
             if (newSelected.has(moduleId)) {
-                // Unchecking: remove this module and all descendants
                 newSelected.delete(moduleId);
                 const descendants = getAllDescendants(moduleId);
                 descendants.forEach(id => newSelected.delete(id));
             } else {
-                // Checking: add this module and all ancestors
                 newSelected.add(moduleId);
                 const ancestors = getAllAncestors(moduleId);
                 ancestors.forEach(id => newSelected.add(id));
@@ -99,9 +96,9 @@ const UploadView = ({ onUploadSuccess }) => {
     const handleDrag = (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (e.type === "dragenter" || e.type === "dragover") {
+        if (e.type === 'dragenter' || e.type === 'dragover') {
             setDragActive(true);
-        } else if (e.type === "dragleave") {
+        } else if (e.type === 'dragleave') {
             setDragActive(false);
         }
     };
@@ -116,7 +113,6 @@ const UploadView = ({ onUploadSuccess }) => {
         }
     };
 
-    // Initialize module progress for selected modules
     const initializeModuleProgress = (modulesArray) => {
         const initial = {};
         modulesArray.forEach(moduleId => {
@@ -125,9 +121,7 @@ const UploadView = ({ onUploadSuccess }) => {
         setModuleProgress(initial);
     };
 
-    // Connect to SSE stream for processing updates
     const connectSSE = (jobId) => {
-        // Close existing connection if any
         if (sseRef.current) {
             sseRef.current.close();
         }
@@ -149,11 +143,9 @@ const UploadView = ({ onUploadSuccess }) => {
                 const { module, status, message } = data;
                 if (!module) return;
 
-                // Clear model downloading when module processing starts
                 setModelDownloading(null);
 
                 if (status === 'resolving_dependency') {
-                    // Parent module is being processed first
                     setModuleProgress(prev => ({
                         ...prev,
                         [module]: {
@@ -173,9 +165,6 @@ const UploadView = ({ onUploadSuccess }) => {
                         }
                     }));
                 }
-            },
-            onIdChanged: (data) => {
-                finalProjectIdRef.current = data.new_id;
             },
             onError: (data) => {
                 const { module, message } = data;
@@ -200,7 +189,6 @@ const UploadView = ({ onUploadSuccess }) => {
         setDownloadProgress(null);
         setModelDownloading(null);
         setModuleProgress({});
-        finalProjectIdRef.current = null;
 
         try {
             const modulesArray = Array.from(selectedModules);
@@ -210,54 +198,34 @@ const UploadView = ({ onUploadSuccess }) => {
                 return;
             }
 
-            // Initialize progress for all selected modules
             initializeModuleProgress(modulesArray);
 
-            let res;
             if (mode === 'file') {
-                if (!file) return;
+                if (!file) {
+                    setIsLoading(false);
+                    return;
+                }
 
-                // Generate a unique temp_project_id for SSE tracking
                 const tempProjectId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-
-                // Start API call with temp_project_id
                 const apiPromise = processFile(file, modulesArray, tempProjectId);
-
-                // Connect to SSE after delay to allow backend to create channel
-                setTimeout(() => connectSSE(tempProjectId), 500);
-
-                res = await apiPromise;
+                window.setTimeout(() => connectSSE(tempProjectId), 500);
+                await apiPromise;
             } else {
-                if (!url) return;
+                if (!url) {
+                    setIsLoading(false);
+                    return;
+                }
 
-                // Generate a unique temp_project_id for SSE tracking (same as file mode)
                 const tempProjectId = `${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
-
-                // For URL mode, show download progress
                 setDownloadProgress({ percentage: 0, status: 'idle' });
-
-                // Start API call with temp_project_id
                 const apiPromise = processUrl(url, modulesArray, tempProjectId);
-
-                // Connect to SSE after delay to allow backend to create channel
-                setTimeout(() => connectSSE(tempProjectId), 500);
-
-                res = await apiPromise;
-            }
-
-            // Close SSE connection
-            if (sseRef.current) {
-                sseRef.current.close();
-                sseRef.current = null;
+                window.setTimeout(() => connectSSE(tempProjectId), 500);
+                await apiPromise;
             }
 
             if (onUploadSuccess) {
                 await onUploadSuccess();
             }
-
-            // Use final project ID if it changed, otherwise use response ID
-            const projectId = finalProjectIdRef.current || res.id;
-            navigate(`/library/${projectId}`);
         } catch (err) {
             if (sseRef.current) {
                 sseRef.current.close();
@@ -269,7 +237,6 @@ const UploadView = ({ onUploadSuccess }) => {
         }
     };
 
-    // Group modules by category
     const modulesByCategory = modules.reduce((acc, module) => {
         const category = module.category || 'Uncategorized';
         if (!acc[category]) acc[category] = [];
@@ -277,7 +244,6 @@ const UploadView = ({ onUploadSuccess }) => {
         return acc;
     }, {});
 
-    // Render module checkbox
     const renderModuleCheckbox = (module, level = 0) => {
         const isChecked = selectedModules.has(module.id);
         const children = modules.filter(m => m.dependsOn === module.id);
@@ -297,146 +263,178 @@ const UploadView = ({ onUploadSuccess }) => {
         );
     };
 
-    // Show module selection only if file/url is selected
-    const showModuleSelection = (mode === 'file' && file) || (mode === 'url' && url);
+    const restoredModuleEntries = activeJob?.batches?.map((batch) => {
+        const moduleId = batch.module_id;
+        const localProgress = displayedModuleProgress[moduleId] || {};
+        const status = batch.state === 'completed'
+            ? 'complete'
+            : batch.state === 'failed'
+                ? 'error'
+                : localProgress.status || (batch.state === 'running' ? 'running' : 'idle');
+        const percentage = batch.state === 'completed'
+            ? 100
+            : localProgress.percentage || 0;
+
+        return [
+            moduleId,
+            {
+                percentage,
+                status,
+                dependencyName: localProgress.dependencyName || '',
+                label: batch.module_name || batch.module_id,
+            },
+        ];
+    }) || Object.entries(displayedModuleProgress).map(([moduleId, progress]) => [
+        moduleId,
+        {
+            ...progress,
+            label: modules.find((module) => module.id === moduleId)?.description || moduleId,
+        },
+    ]);
 
     return (
         <div className="upload-view fade-in">
             <div className="upload-card">
-                <header>
-                    <h2>Start New Project</h2>
-                    <p className="subtitle">Upload an audio file or paste a YouTube link to split stems.</p>
-                </header>
-                <div className="input-area">
-                    <div className="mode-switcher">
-                        <button
-                            className={`switcher-btn ${mode === 'file' ? 'active' : ''}`}
-                            onClick={() => setMode('file')}
-                        >
-                            File Upload
-                        </button>
-                        <button
-                            className={`switcher-btn ${mode === 'url' ? 'active' : ''}`}
-                            onClick={() => setMode('url')}
-                        >
-                            YouTube URL
-                        </button>
-                    </div>
-                    {mode === 'file' ? (
-                        <div
-                            className={`drop-zone ${dragActive ? 'drag-active' : ''} ${file ? 'has-file' : ''}`}
-                            onDragEnter={handleDrag}
-                            onDragLeave={handleDrag}
-                            onDragOver={handleDrag}
-                            onDrop={handleDrop}
-                        >
-                            <input
-                                type="file"
-                                accept=".mp3,.wav,.ogg,.flac"
-                                onChange={(e) => setFile(e.target.files[0])}
-                                id="file-input"
-                                className="hidden-input"
-                                key={file?.name || 'file-input'}
-                            />
-                            <label htmlFor="file-input">
-                                {file ? (
-                                    <div className="file-selected">
-                                        <span className="icon">🎵</span>
-                                        <span className="filename">{file.name}</span>
-                                        <span className="change-text">Click to change</span>
-                                    </div>
-                                ) : (
-                                    <div className="placeholder">
-                                        <span className="icon">📂</span>
-                                        <p>Drag & Drop audio file here</p>
-                                        <span className="sub">or click to browse</span>
-                                    </div>
-                                )}
-                            </label>
-                        </div>
-                    ) : (
-                        <div className="url-section">
-                            <input
-                                type="text"
-                                placeholder="Paste Youtube Link here..."
-                                value={url}
-                                onChange={(e) => setUrl(e.target.value)}
-                                className="styled-input"
-                            />
-                        </div>
-                    )}
-                </div>
-
-
-                <div className="processing-options">
-                    <h3>Processing Options</h3>
-                    <div className="modules-list">
-                        {Object.entries(modulesByCategory).map(([category, categoryModules]) => (
-                            <div key={category} className="module-category">
-                                <h4 className="module-category-title">{category}</h4>
-                                {categoryModules
-                                    .filter(m => !m.dependsOn) // Show only root modules
-                                    .map(module => renderModuleCheckbox(module))}
+                {activeJob ? (
+                    <header className="processing-header">
+                        <div className="processing-badge">Current Processing</div>
+                        <h2>{activeJob.projectName}</h2>
+                        <p className="subtitle">{activeJob.statusText} - {activeJob.currentBatchLabel}</p>
+                        <p className="processing-summary">
+                            Batch {activeJob.completedBatchCount} of {activeJob.totalBatchCount || restoredModuleEntries.length || 1}
+                        </p>
+                    </header>
+                ) : (
+                    <>
+                        <header>
+                            <h2>Start New Project</h2>
+                            <p className="subtitle">Upload an audio file or paste a YouTube link to split stems.</p>
+                        </header>
+                        <div className="input-area">
+                            <div className="mode-switcher">
+                                <button
+                                    className={`switcher-btn ${mode === 'file' ? 'active' : ''}`}
+                                    onClick={() => setMode('file')}
+                                >
+                                    File Upload
+                                </button>
+                                <button
+                                    className={`switcher-btn ${mode === 'url' ? 'active' : ''}`}
+                                    onClick={() => setMode('url')}
+                                >
+                                    YouTube URL
+                                </button>
                             </div>
-                        ))}
-                    </div>
-                </div>
+                            {mode === 'file' ? (
+                                <div
+                                    className={`drop-zone ${dragActive ? 'drag-active' : ''} ${file ? 'has-file' : ''}`}
+                                    onDragEnter={handleDrag}
+                                    onDragLeave={handleDrag}
+                                    onDragOver={handleDrag}
+                                    onDrop={handleDrop}
+                                >
+                                    <input
+                                        type="file"
+                                        accept=".mp3,.wav,.ogg,.flac"
+                                        onChange={(e) => setFile(e.target.files[0])}
+                                        id="file-input"
+                                        className="hidden-input"
+                                        key={file?.name || 'file-input'}
+                                    />
+                                    <label htmlFor="file-input">
+                                        {file ? (
+                                            <div className="file-selected">
+                                                <span className="icon">🎵</span>
+                                                <span className="filename">{file.name}</span>
+                                                <span className="change-text">Click to change</span>
+                                            </div>
+                                        ) : (
+                                            <div className="placeholder">
+                                                <span className="icon">📂</span>
+                                                <p>Drag & Drop audio file here</p>
+                                                <span className="sub">or click to browse</span>
+                                            </div>
+                                        )}
+                                    </label>
+                                </div>
+                            ) : (
+                                <div className="url-section">
+                                    <input
+                                        type="text"
+                                        placeholder="Paste Youtube Link here..."
+                                        value={url}
+                                        onChange={(e) => setUrl(e.target.value)}
+                                        className="styled-input"
+                                    />
+                                </div>
+                            )}
+                        </div>
 
-                {/* Progress Bars Section - shown during processing */}
-                {isLoading && (Object.keys(moduleProgress).length > 0 || downloadProgress || modelDownloading) && (
+                        <div className="processing-options">
+                            <h3>Processing Options</h3>
+                            <div className="modules-list">
+                                {Object.entries(modulesByCategory).map(([category, categoryModules]) => (
+                                    <div key={category} className="module-category">
+                                        <h4 className="module-category-title">{category}</h4>
+                                        {categoryModules
+                                            .filter(m => !m.dependsOn)
+                                            .map(module => renderModuleCheckbox(module))}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    </>
+                )}
+
+                {isProcessingActive && (restoredModuleEntries.length > 0 || displayedDownloadProgress || displayedModelDownloading) && (
                     <div className="progress-section">
-                        {/* Download Progress (URL mode only) */}
-                        {downloadProgress && (
+                        {displayedDownloadProgress && (
                             <ProgressBar
                                 label="Downloading"
-                                percentage={downloadProgress.percentage}
-                                status={downloadProgress.status}
+                                percentage={displayedDownloadProgress.percentage}
+                                status={displayedDownloadProgress.status}
                             />
                         )}
 
-                        {/* Model Downloading Indicator */}
-                        {modelDownloading && (
+                        {displayedModelDownloading && (
                             <div className="model-downloading-indicator">
                                 <div className="loader-small"></div>
-                                <span>Downloading model: {modelDownloading.model?.split('.')[0] || 'AI model'}...</span>
+                                <span>Downloading model: {displayedModelDownloading.model?.split('.')[0] || 'AI model'}...</span>
                             </div>
                         )}
 
-                        {/* Module Progress Bars */}
-                        {Object.entries(moduleProgress).map(([moduleId, progress]) => {
-                            const module = modules.find(m => m.id === moduleId);
-                            const label = module?.description || moduleId;
-                            return (
-                                <ProgressBar
-                                    key={moduleId}
-                                    label={label}
-                                    percentage={progress.percentage}
-                                    status={progress.status}
-                                    dependencyName={progress.dependencyName}
-                                />
-                            );
-                        })}
+                        {restoredModuleEntries.map(([moduleId, progress]) => (
+                            <ProgressBar
+                                key={moduleId}
+                                label={progress.label}
+                                percentage={progress.percentage}
+                                status={progress.status}
+                                dependencyName={progress.dependencyName}
+                            />
+                        ))}
                     </div>
                 )}
 
-                {error && <div className="error-banner">{error}</div>}
+                {displayedError && <div className="error-banner">{displayedError}</div>}
 
-                <div className="actions">
-                    <button
-                        onClick={handleUpload}
-                        disabled={(mode === 'file' && !file) || (mode === 'url' && !url) || isLoading}
-                        className="btn btn-primary btn-large"
-                    >
-                        {isLoading ? (
-                            <>
-                                <div className="loader"></div>
-                                <span>Processing...</span>
-                            </>
-                        ) : (
-                            <span>Process Track</span>
-                        )}
-                    </button>
-                </div>
+                {!activeJob && (
+                    <div className="actions">
+                        <button
+                            onClick={handleUpload}
+                            disabled={(mode === 'file' && !file) || (mode === 'url' && !url) || isLoading}
+                            className="btn btn-primary btn-large"
+                        >
+                            {isLoading ? (
+                                <>
+                                    <div className="loader"></div>
+                                    <span>Processing...</span>
+                                </>
+                            ) : (
+                                <span>Process Track</span>
+                            )}
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );
