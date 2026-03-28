@@ -14,10 +14,12 @@ class ProjectService:
         self,
         library_folder: str,
         project_repository=None,
+        processing_job_repository=None,
         legacy_importer=None,
     ):
         self.library_folder = library_folder
         self.project_repository = project_repository
+        self.processing_job_repository = processing_job_repository
         self.legacy_importer = legacy_importer
         self.track_sessions: Dict[str, Dict[str, Any]] = {}
         self.session_history: List[Dict[str, Any]] = []
@@ -154,6 +156,11 @@ class ProjectService:
 
         self.project_repository.replace_project_snapshot(project_row, file_rows)
         self._sync_sqlite_cache(project_row["id"])
+
+    def get_active_processing_job_snapshot(self) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_active_processing_job()
 
     def _sync_sqlite_cache(self, project_id: str) -> None:
         snapshot = self.get_sqlite_project_snapshot(project_id)
