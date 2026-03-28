@@ -228,6 +228,7 @@ function App() {
   const navigate = useNavigate()
   const [library, setLibrary] = useState([])
   const [activeJob, setActiveJob] = useState(null)
+  const [completedJob, setCompletedJob] = useState(null)
   const [lastCompletedJob, setLastCompletedJob] = useState(null)
   const [processingToast, setProcessingToast] = useState(null)
   const [setupRequired, setSetupRequired] = useState(() => {
@@ -244,32 +245,6 @@ function App() {
       activeSseRef.current = null
     }
   }, [])
-
-  const handleActiveJobTerminal = useCallback((job) => {
-    if (!job) {
-      return
-    }
-
-    setActiveJob(null)
-    setLastCompletedJob(job)
-
-    if (location.pathname === '/split') {
-      setProcessingToast(null)
-      navigate(`/library/${job.projectId}`)
-      return
-    }
-
-    if (completionToastKeyRef.current === job.jobId) {
-      return
-    }
-
-    completionToastKeyRef.current = job.jobId
-    setProcessingToast({
-      jobId: job.jobId,
-      projectId: job.projectId,
-      projectName: job.projectName,
-    })
-  }, [location.pathname, navigate])
 
   const updateActiveJob = useCallback((updater) => {
     setActiveJob((current) => {
@@ -372,7 +347,7 @@ function App() {
 
         setActiveJob((current) => {
           if (current) {
-            handleActiveJobTerminal({
+            setCompletedJob({
               ...current,
               state: 'completed',
               statusText: 'Finished',
@@ -388,7 +363,7 @@ function App() {
         console.error('Failed to subscribe to active processing updates', error)
       },
     })
-  }, [closeActiveSse, handleActiveJobTerminal, updateActiveJob])
+  }, [closeActiveSse, updateActiveJob])
 
   const hydrateActiveProcessing = useCallback(async () => {
     try {
@@ -479,6 +454,39 @@ function App() {
       closeActiveSse()
     }
   }, [closeActiveSse, hydrateActiveProcessing, setupRequired])
+
+  useEffect(() => {
+    if (!completedJob) {
+      return undefined
+    }
+
+    const completionTimeout = window.setTimeout(() => {
+      refreshLibrary()
+      setLastCompletedJob(completedJob)
+
+      if (location.pathname === '/split') {
+        setProcessingToast(null)
+        setCompletedJob(null)
+        navigate(`/library/${completedJob.projectId}`)
+        return
+      }
+
+      if (completionToastKeyRef.current !== completedJob.jobId) {
+        completionToastKeyRef.current = completedJob.jobId
+        setProcessingToast({
+          jobId: completedJob.jobId,
+          projectId: completedJob.projectId,
+          projectName: completedJob.projectName,
+        })
+      }
+
+      setCompletedJob(null)
+    }, 0)
+
+    return () => {
+      window.clearTimeout(completionTimeout)
+    }
+  }, [completedJob, location.pathname, navigate, refreshLibrary])
 
   const hasGlobalProcessingState = Boolean(activeJob || lastCompletedJob || processingToast)
 
