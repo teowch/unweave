@@ -4,7 +4,7 @@ import { createSSEConnection } from '../../services/sse';
 import ProgressBar from '../common/ProgressBar';
 import './UploadView.css';
 
-const UploadView = ({ onUploadSuccess, activeJob }) => {
+const UploadView = ({ onUploadSuccess, activeJob, onProcessingStarted, onProcessingFinished }) => {
     const [mode, setMode] = useState('file'); // 'file' | 'url'
     const [file, setFile] = useState(null);
     const [url, setUrl] = useState('');
@@ -179,6 +179,9 @@ const UploadView = ({ onUploadSuccess, activeJob }) => {
             onDone: () => {
                 setDownloadProgress(prev => prev ? { ...prev, status: 'complete' } : null);
                 setModelDownloading(null);
+                if (onProcessingFinished) {
+                    onProcessingFinished();
+                }
             }
         });
     };
@@ -223,10 +226,22 @@ const UploadView = ({ onUploadSuccess, activeJob }) => {
                 await apiPromise;
             }
 
+            if (onProcessingStarted) {
+                await onProcessingStarted();
+            }
+
             if (onUploadSuccess) {
                 await onUploadSuccess();
             }
         } catch (err) {
+            if (err.response?.data?.error === 'job already active' && err.response?.data?.active_job) {
+                setError(null);
+                if (onProcessingStarted) {
+                    await onProcessingStarted(err.response.data.active_job);
+                }
+                return;
+            }
+
             if (sseRef.current) {
                 sseRef.current.close();
                 sseRef.current = null;

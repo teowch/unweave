@@ -494,6 +494,27 @@ function App() {
     navigate('/split')
   }, [navigate])
 
+  const handleProcessingStarted = useCallback(async (snapshot = null) => {
+    const normalized = normalizeActiveJobSnapshot(snapshot)
+
+    if (normalized) {
+      setLastCompletedJob(null)
+      setProcessingToast(null)
+      setCompletedJob(null)
+      setActiveJob(normalized)
+      subscribeToActiveJob(normalized.projectId)
+      return normalized
+    }
+
+    const hydrated = await hydrateActiveProcessing()
+    if (hydrated) {
+      setLastCompletedJob(null)
+      setProcessingToast(null)
+      setCompletedJob(null)
+    }
+    return hydrated
+  }, [hydrateActiveProcessing, subscribeToActiveJob])
+
   const handleOpenCompletedProject = () => {
     if (!lastCompletedJob?.projectId) {
       return
@@ -546,7 +567,17 @@ function App() {
           <div className="main-route-content">
             <Routes>
               <Route path="/" element={<Navigate to="/split" replace />} />
-              <Route path="/split" element={<UploadView onUploadSuccess={refreshLibrary} activeJob={activeJob} />} />
+              <Route
+                path="/split"
+                element={
+                  <UploadView
+                    onUploadSuccess={refreshLibrary}
+                    activeJob={activeJob}
+                    onProcessingStarted={handleProcessingStarted}
+                    onProcessingFinished={hydrateActiveProcessing}
+                  />
+                }
+              />
               <Route path="/library" element={<LibraryView items={library} refresh={refreshLibrary} />} />
               <Route path="/library/:id" element={<EditorRoute onUnify={handleUnify} onProjectUpdated={refreshLibrary} />} />
               <Route path="/models" element={<ModelsView />} />
