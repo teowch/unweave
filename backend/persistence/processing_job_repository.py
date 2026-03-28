@@ -124,6 +124,7 @@ class ProcessingJobRepository:
             "state = ?",
             "started_at = COALESCE(?, started_at)",
             "finished_at = COALESCE(?, finished_at)",
+            "output_paths = COALESCE(?, output_paths)",
             "error_message = COALESCE(?, error_message)",
             "cleanup_required = COALESCE(?, cleanup_required)",
             "updated_at = CURRENT_TIMESTAMP",
@@ -132,6 +133,7 @@ class ProcessingJobRepository:
             state,
             fields.get("started_at"),
             fields.get("finished_at"),
+            None if "output_paths" not in fields else json.dumps(fields["output_paths"]),
             fields.get("error_message"),
             None if "cleanup_required" not in fields else int(bool(fields["cleanup_required"])),
         ]

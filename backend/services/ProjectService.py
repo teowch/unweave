@@ -162,6 +162,31 @@ class ProjectService:
             return None
         return self.processing_job_repository.get_active_processing_job()
 
+    def create_processing_job(self, job_row: Dict[str, Any]) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.create_job(job_row)
+
+    def replace_processing_batches(self, job_id: str, batch_rows: List[Dict[str, Any]]) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.replace_batches(job_id, batch_rows)
+
+    def update_processing_job_state(self, job_id: str, state: str, **fields: Any) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.update_job_state(job_id, state, **fields)
+
+    def update_processing_batch_state(self, job_id: str, batch_order: int, state: str, **fields: Any) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.update_batch_state(job_id, batch_order, state, **fields)
+
+    def get_processing_job_snapshot(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_job_snapshot(job_id)
+
     def _sync_sqlite_cache(self, project_id: str) -> None:
         snapshot = self.get_sqlite_project_snapshot(project_id)
         if not snapshot:

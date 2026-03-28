@@ -40,6 +40,7 @@ class AudioService:
         executed_modules = set(self.project_service.get_sqlite_project_status(project_id)["executed_modules"])
 
         modules_in_order = []
+        requested_modules = set(modules_to_run)
         for module_name in modules_to_run:
             if module_name not in MODULE_REGISTRY:
                 logger.warning(f"Unknown module requested: {module_name}")
@@ -49,22 +50,92 @@ class AudioService:
                 if dependency not in executed_modules and dependency not in modules_in_order:
                     modules_in_order.append(dependency)
 
-        for module_name in modules_in_order:
-            config = get_module(module_name)
-            input_path = self._resolve_input_path(project_id, filename, module_name)
-
-            sse_message_handler.set_module(module_name)
-            sse_message_handler.set_current_model(config["model"])
-
-            outputs = self.processor.execute_module(
-                module_name=module_name,
-                input_path=input_path,
-                output_dir=output_folder,
-                interceptor_callback=getattr(sse_message_handler, "interceptor_callback", None),
+        if modules_in_order:
+            job_id = self._build_job_id(project_id)
+            self.project_service.create_processing_job(
+                {
+                    "id": job_id,
+                    "project_id": project_id,
+                    "state": "running",
+                    "source_type": "local_file",
+                    "source_name": filename,
+                    "requested_by": "user",
+                    "started_at": self._timestamp(),
+                }
             )
-            precompute_waveforms_for_outputs(outputs, output_folder)
-            self._refresh_project_snapshot(project_id, filename, display_name=display_name, thumbnail=thumbnail)
-            executed_modules = set(self.project_service.get_sqlite_project_status(project_id)["executed_modules"])
+            self.project_service.replace_processing_batches(
+                job_id,
+                [
+                    {
+                        "job_id": job_id,
+                        "module_id": module_name,
+                        "state": "pending",
+                        "batch_order": index,
+                        "input_relative_path": self._resolve_input_relative_path(project_id, filename, module_name),
+                        "output_paths": [],
+                        "started_at": None,
+                        "finished_at": None,
+                        "error_message": None,
+                        "cleanup_required": False,
+                        "requested_directly": module_name in requested_modules,
+                    }
+                    for index, module_name in enumerate(modules_in_order, start=1)
+                ],
+            )
+
+            try:
+                for batch_order, module_name in enumerate(modules_in_order, start=1):
+                    config = get_module(module_name)
+                    input_path = self._resolve_input_path(project_id, filename, module_name)
+
+                    self.project_service.update_processing_batch_state(
+                        job_id,
+                        batch_order,
+                        "running",
+                        started_at=self._timestamp(),
+                        cleanup_required=False,
+                    )
+                    sse_message_handler.set_module(module_name)
+                    sse_message_handler.set_current_model(config["model"])
+
+                    outputs = self.processor.execute_module(
+                        module_name=module_name,
+                        input_path=input_path,
+                        output_dir=output_folder,
+                        interceptor_callback=getattr(sse_message_handler, "interceptor_callback", None),
+                    )
+                    precompute_waveforms_for_outputs(outputs, output_folder)
+                    self._refresh_project_snapshot(project_id, filename, display_name=display_name, thumbnail=thumbnail)
+                    executed_modules = set(self.project_service.get_sqlite_project_status(project_id)["executed_modules"])
+                    self.project_service.update_processing_batch_state(
+                        job_id,
+                        batch_order,
+                        "completed",
+                        finished_at=self._timestamp(),
+                        output_paths=self._to_relative_output_paths(output_folder, outputs),
+                        cleanup_required=False,
+                    )
+
+                self.project_service.update_processing_job_state(
+                    job_id,
+                    "completed",
+                    finished_at=self._timestamp(),
+                )
+            except Exception as exc:
+                self.project_service.update_processing_batch_state(
+                    job_id,
+                    batch_order,
+                    "failed",
+                    finished_at=self._timestamp(),
+                    error_message=str(exc),
+                    cleanup_required=True,
+                )
+                self.project_service.update_processing_job_state(
+                    job_id,
+                    "failed",
+                    finished_at=self._timestamp(),
+                )
+                raise
 
         snapshot = self.project_service.get_sqlite_project_snapshot(project_id)
 
@@ -75,6 +146,18 @@ class AudioService:
             'executed_modules': snapshot['status']['executed_modules'],
             'thumbnail': snapshot['project'].get('thumbnail')
         }
+
+    def _build_job_id(self, project_id: str) -> str:
+        return f"{project_id}:{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+
+    def _timestamp(self) -> str:
+        return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _to_relative_output_paths(self, output_folder: str, outputs: Dict[str, str]) -> List[str]:
+        relative_paths = []
+        for output_path in outputs.values():
+            relative_paths.append(Path(output_path).relative_to(output_folder).as_posix())
+        return sorted(relative_paths)
 
     def _resolve_input_path(self, project_id: str, original_filename: str, module_name: str) -> str:
         config = get_module(module_name)
@@ -100,6 +183,23 @@ class AudioService:
         raise FileNotFoundError(
             f"Dependency output '{expected_filename}' for module '{module_name}' was not found"
         )
+
+    def _resolve_input_relative_path(self, project_id: str, original_filename: str, module_name: str) -> str:
+        config = get_module(module_name)
+        if not config.get("depends_on"):
+            return original_filename
+
+        parent_module = config["depends_on"]
+        input_stem = config.get("input_stem")
+        if not input_stem:
+            raise ValueError(f"Module '{module_name}' requires an input stem")
+
+        parent_output_name = MODULE_REGISTRY[parent_module]["custom_output_names"][input_stem]
+        expected_filename = f"{parent_output_name}.{self.processor.output_format}"
+        resolved = self.project_service.resolve_sqlite_file(project_id, expected_filename)
+        if resolved:
+            return resolved["relative_path"]
+        return expected_filename
 
     def _refresh_project_snapshot(self, project_id: str, original_filename: str, display_name: Optional[str] = None, thumbnail: Optional[str] = None):
         existing_project = self.project_service.get_sqlite_project(project_id) or {}
