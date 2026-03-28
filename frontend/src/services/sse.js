@@ -13,8 +13,8 @@ import { SSE_BASE } from './api';
  */
 
 /**
- * Creates an SSE connection for a specific job/project
- * @param {string} jobId - The job/project ID to subscribe to
+ * Creates an SSE connection for a specific project channel
+ * @param {string} projectId - The project ID to subscribe to
  * @param {Object} handlers - Event handler callbacks
  * @param {Function} handlers.onDownloadProgress - Called with { module, status, message } for download updates
  * @param {Function} handlers.onModuleProgress - Called with { module, status, message } for module processing updates
@@ -27,8 +27,8 @@ import { SSE_BASE } from './api';
  * @param {Function} handlers.onConnectionError - Called when SSE connection fails
  * @returns {Object} Controller with { close, reconnect }
  */
-export function createSSEConnection(jobId, handlers = {}) {
-    let currentJobId = jobId;
+export function createSSEConnection(projectId, handlers = {}) {
+    let currentJobId = projectId;
     let eventSource = null;
     let retryCount = 0;
     const MAX_RETRIES = 10;
@@ -158,7 +158,7 @@ export function createSSEConnection(jobId, handlers = {}) {
     }
 
     // Initial connection
-    connect(jobId);
+    connect(projectId);
 
     return {
         /** Close the SSE connection */

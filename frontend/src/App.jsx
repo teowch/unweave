@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom'
-import { getHistory, getProject, isElectron, unifyStems } from './services/api'
+import { getActiveJob, getHistory, getProject, isElectron, unifyStems } from './services/api'
 import { createSSEConnection } from './services/sse'
 import './App.css'
 
@@ -15,6 +15,59 @@ import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
 
 const CONSISTENCY_RETRY_MS = 1500
+
+const toTitleCase = (value = '') => (
+  value
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
+)
+
+const normalizeProgressValue = (value) => {
+  const parsed = Number.parseInt(value, 10)
+  if (Number.isNaN(parsed)) {
+    return 0
+  }
+
+  return Math.max(0, Math.min(100, parsed))
+}
+
+const normalizeActiveJobSnapshot = (snapshot) => {
+  if (!snapshot?.job) {
+    return null
+  }
+
+  const batches = Array.isArray(snapshot.batches) ? snapshot.batches : []
+  const completedBatchCount = batches.filter((batch) => batch.state === 'completed').length
+  const totalBatchCount = batches.length
+  const currentBatch = batches.find((batch) => batch.state === 'running')
+    || batches.find((batch) => batch.state === 'pending')
+    || batches[batches.length - 1]
+    || null
+  const currentBatchLabel = currentBatch?.module_name
+    || currentBatch?.module_id
+    || 'Preparing'
+
+  return {
+    jobId: snapshot.job.id,
+    projectId: snapshot.job.project_id,
+    projectName: snapshot.project?.name || snapshot.job.source_name || 'Untitled Project',
+    state: snapshot.job.state,
+    batches,
+    currentBatchLabel,
+    overallProgress: totalBatchCount > 0
+      ? Math.round((completedBatchCount / totalBatchCount) * 100)
+      : 0,
+    completedBatchCount,
+    totalBatchCount,
+    statusText: toTitleCase(snapshot.job.state || 'processing'),
+    downloadProgress: null,
+    modelDownloading: null,
+    moduleProgress: {},
+    lastEvent: null,
+  }
+}
 
 const isConsistencyRetryable = (error) => {
   const status = error?.response?.status
@@ -170,10 +223,188 @@ const EditorRoute = ({ onUnify, onProjectUpdated }) => {
 
 function App() {
   const [library, setLibrary] = useState([])
+  const [activeJob, setActiveJob] = useState(null)
+  const [lastCompletedJob, setLastCompletedJob] = useState(null)
+  const [processingToast, setProcessingToast] = useState(null)
   const [setupRequired, setSetupRequired] = useState(() => {
     if (!isElectron || !window.electronAPI) return false
     return window.electronAPI.isSetupRequired === true
   })
+  const activeSseRef = useRef(null)
+  const completionToastKeyRef = useRef(null)
+  const hydrateActiveProcessingRef = useRef(null)
+
+  const closeActiveSse = useCallback(() => {
+    if (activeSseRef.current) {
+      activeSseRef.current.close()
+      activeSseRef.current = null
+    }
+  }, [])
+
+  const handleActiveJobTerminal = useCallback((job) => {
+    if (!job) {
+      return
+    }
+
+    setActiveJob(null)
+    setLastCompletedJob(job)
+
+    if (completionToastKeyRef.current === job.jobId) {
+      return
+    }
+
+    completionToastKeyRef.current = job.jobId
+    setProcessingToast({
+      jobId: job.jobId,
+      projectId: job.projectId,
+      projectName: job.projectName,
+    })
+  }, [])
+
+  const updateActiveJob = useCallback((updater) => {
+    setActiveJob((current) => {
+      if (!current) {
+        return current
+      }
+
+      const next = typeof updater === 'function'
+        ? updater(current)
+        : updater
+
+      if (!next) {
+        return next
+      }
+
+      return {
+        ...current,
+        ...next,
+      }
+    })
+  }, [])
+
+  const subscribeToActiveJob = useCallback((projectId) => {
+    if (!projectId) {
+      closeActiveSse()
+      return
+    }
+
+    closeActiveSse()
+    activeSseRef.current = createSSEConnection(projectId, {
+      onDownloadProgress: (data) => {
+        const percentage = normalizeProgressValue(data?.message)
+        updateActiveJob({
+          downloadProgress: {
+            percentage,
+            status: data?.status || 'running',
+          },
+          statusText: 'Downloading',
+          lastEvent: 'download',
+        })
+      },
+      onModelDownloading: (data) => {
+        updateActiveJob({
+          modelDownloading: data?.status === 'complete'
+            ? null
+            : {
+                model: data?.model || null,
+                status: data?.status || 'downloading',
+                progress: data?.progress || null,
+              },
+          lastEvent: 'model_downloading',
+        })
+      },
+      onModuleProgress: (data) => {
+        const moduleId = data?.module
+        if (!moduleId) {
+          return
+        }
+
+        updateActiveJob((current) => {
+          const percentage = normalizeProgressValue(data?.message)
+          const nextModuleProgress = {
+            ...current.moduleProgress,
+            [moduleId]: {
+              percentage,
+              status: data?.status || 'running',
+              dependencyName: data?.status === 'resolving_dependency' ? data?.message || '' : '',
+            },
+          }
+          const batchLabel = current.batches.find((batch) => batch.module_id === moduleId)?.module_name
+            || current.batches.find((batch) => batch.module_id === moduleId)?.module_id
+            || moduleId
+
+          return {
+            moduleProgress: nextModuleProgress,
+            currentBatchLabel: batchLabel,
+            statusText: data?.status === 'resolving_dependency'
+              ? `Waiting on ${data?.message || 'dependency'}`
+              : 'Processing',
+            modelDownloading: null,
+            lastEvent: 'module_processing',
+          }
+        })
+      },
+      onError: (data) => {
+        updateActiveJob({
+          state: 'failed',
+          statusText: data?.message || 'Processing failed',
+          lastEvent: 'error',
+        })
+      },
+      onDone: async () => {
+        closeActiveSse()
+        if (hydrateActiveProcessingRef.current) {
+          const refreshedJob = await hydrateActiveProcessingRef.current()
+          if (refreshedJob) {
+            return
+          }
+        }
+
+        setActiveJob((current) => {
+          if (current) {
+            handleActiveJobTerminal({
+              ...current,
+              state: 'completed',
+              statusText: 'Finished',
+              overallProgress: 100,
+              completedBatchCount: current.totalBatchCount || current.completedBatchCount,
+            })
+          }
+
+          return null
+        })
+      },
+      onConnectionError: (error) => {
+        console.error('Failed to subscribe to active processing updates', error)
+      },
+    })
+  }, [closeActiveSse, handleActiveJobTerminal, updateActiveJob])
+
+  const hydrateActiveProcessing = useCallback(async () => {
+    try {
+      const response = await getActiveJob()
+      const normalized = normalizeActiveJobSnapshot(response?.active_job)
+
+      if (!normalized) {
+        closeActiveSse()
+        setActiveJob(null)
+        return null
+      }
+
+      setActiveJob(normalized)
+      subscribeToActiveJob(normalized.projectId)
+      return normalized
+    } catch (error) {
+      console.error('Failed to load active processing snapshot', error)
+      closeActiveSse()
+      setActiveJob(null)
+      return null
+    }
+  }, [closeActiveSse, subscribeToActiveJob])
+
+  useEffect(() => {
+    hydrateActiveProcessingRef.current = hydrateActiveProcessing
+  }, [hydrateActiveProcessing])
 
   useEffect(() => {
     if (isElectron && window.electronAPI?.onSetupComplete) {
@@ -204,23 +435,42 @@ function App() {
     }
 
     let cancelled = false
-
-    refreshLibrary()
-      .then(() => {
-        if (cancelled) {
-          return
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) {
-          console.error('Failed to load library', err)
-        }
-      })
+    const refreshTimeout = window.setTimeout(() => {
+      refreshLibrary()
+        .then(() => {
+          if (cancelled) {
+            return
+          }
+        })
+        .catch((err) => {
+          if (!cancelled) {
+            console.error('Failed to load library', err)
+          }
+        })
+    }, 0)
 
     return () => {
+      window.clearTimeout(refreshTimeout)
       cancelled = true
     }
   }, [refreshLibrary, setupRequired])
+
+  useEffect(() => {
+    if (setupRequired) {
+      return undefined
+    }
+
+    const hydrateTimeout = window.setTimeout(() => {
+      hydrateActiveProcessing()
+    }, 0)
+
+    return () => {
+      window.clearTimeout(hydrateTimeout)
+      closeActiveSse()
+    }
+  }, [closeActiveSse, hydrateActiveProcessing, setupRequired])
+
+  const hasGlobalProcessingState = Boolean(activeJob || lastCompletedJob || processingToast)
 
   const handleUnify = async (trackId, selectedStems) => {
     if (!selectedStems || selectedStems.length === 0) return alert('Select stems to unify first.')
@@ -249,7 +499,7 @@ function App() {
     <ContextMenuProvider>
       <div className="app-container">
         <Sidebar />
-        <main className="main-content">
+        <main className="main-content" data-processing-state={hasGlobalProcessingState ? 'active' : 'idle'}>
           <Routes>
             <Route path="/" element={<Navigate to="/split" replace />} />
             <Route path="/split" element={<UploadView onUploadSuccess={refreshLibrary} />} />

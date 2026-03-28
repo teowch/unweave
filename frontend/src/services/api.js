@@ -212,6 +212,15 @@ export const getProject = async (trackId) => {
 };
 
 /**
+ * Get the canonical active processing snapshot.
+ * @returns {Promise<Object>} Backend payload with active_job
+ */
+export const getActiveJob = async () => {
+    const response = await axios.get(`${API_BASE}/active`);
+    return response.data;
+};
+
+/**
  * Get system information for settings page
  * @returns {Promise<Object>} System info object
  */
