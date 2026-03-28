@@ -23,12 +23,37 @@ audio_bp = Blueprint('audio', __name__)
 
 WORKFLOW_MAP = MODULE_REGISTRY
 
+
+def _get_active_job_conflict():
+    active_snapshot = project_service.get_active_processing_job_snapshot()
+    if not active_snapshot:
+        return None
+
+    job = active_snapshot["job"]
+    return jsonify({
+        'error': 'job already active',
+        'code': 'job_already_active',
+        'active_job': active_snapshot,
+        'job_id': job['id'],
+        'project_id': job['project_id'],
+    }), 409
+
 @audio_bp.route('/modules', methods=['GET'])
 def get_modules():
     return jsonify({'modules': get_modules_for_api()}), 200
 
+
+@audio_bp.route('/active', methods=['GET'])
+def get_active_processing():
+    active_snapshot = project_service.get_active_processing_job_snapshot()
+    return jsonify({'active_job': active_snapshot}), 200
+
 @audio_bp.route('/process', methods=['POST'])
 def process_audio():
+    active_job_conflict = _get_active_job_conflict()
+    if active_job_conflict:
+        return active_job_conflict
+
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
 
@@ -79,6 +104,10 @@ def process_audio():
 
 @audio_bp.route('/process-url', methods=['POST'])
 def process_url():
+    active_job_conflict = _get_active_job_conflict()
+    if active_job_conflict:
+        return active_job_conflict
+
     data = request.json
     url = data.get('url')
     modules_to_run = data.get('modules', [])
@@ -128,6 +157,10 @@ def process_url():
 
 @audio_bp.route('/project/<project_id>/run-modules', methods=['POST'])
 def run_additional_modules(project_id):
+    active_job_conflict = _get_active_job_conflict()
+    if active_job_conflict:
+        return active_job_conflict
+
     data = request.json
     modules_to_run = data.get('modules', [])
 

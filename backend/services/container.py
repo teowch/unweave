@@ -4,6 +4,7 @@ from .FileService import FileService
 from .SSEManager import SSEManager
 from persistence import Database
 from persistence.project_repository import ProjectRepository
+from persistence.processing_job_repository import ProcessingJobRepository
 from persistence.import_legacy import LegacyProjectImporter
 import os
 
@@ -18,10 +19,12 @@ sse_manager = SSEManager()
 database = Database(LIBRARY_FOLDER)
 database.bootstrap()
 project_repository = ProjectRepository(database)
+processing_job_repository = ProcessingJobRepository(database)
 legacy_importer = LegacyProjectImporter(LIBRARY_FOLDER, project_repository)
 project_service = ProjectService(
     LIBRARY_FOLDER,
     project_repository=project_repository,
+    processing_job_repository=processing_job_repository,
     legacy_importer=legacy_importer,
 )
 project_service.bootstrap_sqlite_metadata()

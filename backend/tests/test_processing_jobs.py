@@ -1,5 +1,10 @@
+from flask import Flask
+
 from persistence import Database
+from routes import audio_routes
+from services.FileService import FileService
 from services.ProjectService import ProjectService
+from services.SSEManager import SSEManager
 
 try:
     from persistence.processing_job_repository import ProcessingJobRepository
@@ -31,6 +36,25 @@ BATCH_STATES = {
 def _create_repository(library_root):
     assert ProcessingJobRepository is not None, "ProcessingJobRepository is not implemented"
     return ProcessingJobRepository(Database(str(library_root)))
+
+
+def _create_audio_route_client(library_root, tmp_path, monkeypatch, repository):
+    project_service = ProjectService(
+        str(library_root),
+        project_repository=None,
+        processing_job_repository=repository,
+    )
+    file_service = FileService(project_service, str(tmp_path / "uploads"))
+    sse_manager = SSEManager()
+
+    monkeypatch.setattr(audio_routes, "project_service", project_service)
+    monkeypatch.setattr(audio_routes, "file_service", file_service)
+    monkeypatch.setattr(audio_routes, "sse_manager", sse_manager)
+
+    app = Flask(__name__)
+    app.register_blueprint(audio_routes.audio_bp, url_prefix="/api")
+
+    return app.test_client()
 
 
 def test_active_job_guard_rejects_second_running_job(
@@ -141,3 +165,54 @@ def test_active_job_snapshot_returns_canonical_ordered_batches(
         "stems/drums.htdemucs_6s.flac",
     ]
     assert active_snapshot["batches"][1]["requested_directly"] == 0
+
+
+def test_active_job_snapshot_route_returns_canonical_payload(
+    library_root,
+    tmp_path,
+    monkeypatch,
+    sample_processing_job_row,
+    sample_processing_batch_rows,
+):
+    repository = _create_repository(library_root)
+    repository.create_job(sample_processing_job_row)
+    repository.replace_batches(sample_processing_job_row["id"], sample_processing_batch_rows)
+    client = _create_audio_route_client(library_root, tmp_path, monkeypatch, repository)
+
+    response = client.get("/api/active")
+
+    payload = response.get_json()
+
+    assert response.status_code == 200
+    assert payload["active_job"]["job"]["id"] == sample_processing_job_row["id"]
+    assert [batch["batch_order"] for batch in payload["active_job"]["batches"]] == [1, 2]
+    assert payload["active_job"]["batches"][0]["module_id"] == "htdemucs_6s"
+    assert payload["active_job"]["batches"][1]["module_id"] == "male_female"
+
+
+def test_active_job_guard_rejects_processing_route_when_job_exists(
+    library_root,
+    tmp_path,
+    monkeypatch,
+    sample_processing_job_row,
+):
+    repository = _create_repository(library_root)
+    repository.create_job(sample_processing_job_row)
+    client = _create_audio_route_client(library_root, tmp_path, monkeypatch, repository)
+
+    response = client.post(
+        "/api/process-url",
+        json={
+            "url": "https://example.com/audio",
+            "modules": ["htdemucs_6s"],
+            "temp_project_id": "temp-123",
+        },
+    )
+
+    payload = response.get_json()
+
+    assert response.status_code == 409
+    assert payload["error"] == "job already active"
+    assert payload["code"] == "job_already_active"
+    assert payload["job_id"] == sample_processing_job_row["id"]
+    assert payload["project_id"] == sample_processing_job_row["project_id"]
