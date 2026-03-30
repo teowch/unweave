@@ -298,6 +298,9 @@ function App() {
         }
 
         if (normalized.isFinished) {
+          const completionSource = activeJobRef.current?.jobId === normalized.jobId
+            ? 'transition'
+            : 'hydrated'
           closeActiveSse()
           activeJobRef.current = null
           setActiveJob(null)
@@ -307,6 +310,7 @@ function App() {
               : {
                   ...normalized,
                   completedFromPath: location.pathname,
+                  completionSource,
                 }
           ))
           setProcessingRefreshError(null)
@@ -411,7 +415,10 @@ function App() {
       refreshLibrary()
       setLastCompletedJob(completedJob)
 
-      if (completedJob.completedFromPath === '/split') {
+      if (
+        completedJob.completedFromPath === '/split'
+        && completedJob.completionSource === 'transition'
+      ) {
         setProcessingToast(null)
         setCompletedJob(null)
         navigate(`/library/${completedJob.projectId}`)
