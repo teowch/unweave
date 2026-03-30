@@ -89,7 +89,8 @@ def test_process_separation_persists_sqlite_snapshot_without_metadata_json(libra
 
     active_job = project_service.get_active_processing_job_snapshot()
 
-    assert active_job is None
+    assert active_job["job"]["state"] == "completed"
+    assert active_job["job"]["completion_acknowledged_at"] is None
 
     job_rows = project_service.processing_job_repository.database.connect().execute(
         "SELECT id FROM processing_jobs ORDER BY created_at DESC"
