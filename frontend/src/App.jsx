@@ -26,6 +26,8 @@ const normalizeActiveJobSnapshot = (snapshot) => {
     return null
   }
 
+  const recovery = snapshot.recovery || {}
+
   const steps = Array.isArray(snapshot.steps)
     ? [...snapshot.steps].sort((left, right) => (left.order || 0) - (right.order || 0))
     : []
@@ -41,10 +43,10 @@ const normalizeActiveJobSnapshot = (snapshot) => {
     projectId: snapshot.job.project_id,
     projectName: snapshot.project?.name || snapshot.job.source_name || 'Untitled Project',
     state: snapshot.job.state,
-    canSafeResume: Boolean(snapshot.job.canSafeResume),
-    canRerunFromSource: Boolean(snapshot.job.canRerunFromSource),
-    recoveryMode: snapshot.job.recoveryMode || 'discard_only',
-    recoveryMessage: snapshot.job.recoveryMessage || null,
+    canSafeResume: Boolean(recovery.canSafeResume),
+    canRerunFromSource: Boolean(recovery.canRerunFromSource),
+    recoveryMode: recovery.recoveryMode || 'discard_only',
+    recoveryMessage: recovery.recoveryMessage || null,
     completionAcknowledgedAt: snapshot.job.completion_acknowledged_at || null,
     steps,
     currentStep,
