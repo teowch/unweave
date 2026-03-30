@@ -269,7 +269,8 @@ function App() {
     })
   }, [closeActiveSse])
 
-  const hydrateActiveProcessing = useCallback(async (expectedProjectId = null) => {
+  const hydrateActiveProcessing = useCallback(async (expectedProjectId = null, options = {}) => {
+    const { preserveSubscriptionOnEmpty = false } = options
     let lastError = null
 
     for (let attempt = 0; attempt < ACTIVE_JOB_HYDRATION_ATTEMPTS; attempt += 1) {
@@ -283,9 +284,11 @@ function App() {
             continue
           }
 
-          closeActiveSse()
-          activeJobRef.current = null
-          setActiveJob(null)
+          if (!preserveSubscriptionOnEmpty) {
+            closeActiveSse()
+            activeJobRef.current = null
+            setActiveJob(null)
+          }
           setProcessingRefreshError(null)
           return null
         }
@@ -472,7 +475,7 @@ function App() {
       setCompletedJob(null)
       setProcessingRefreshError(null)
       subscribeToActiveJob(expectedProjectId)
-      const hydrated = await hydrateActiveProcessing()
+      const hydrated = await hydrateActiveProcessing(null, { preserveSubscriptionOnEmpty: true })
       if (hydrated) {
         setLastCompletedJob(null)
         setProcessingToast(null)
