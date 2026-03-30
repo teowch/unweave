@@ -91,26 +91,32 @@ const CurrentProcessing = ({
     }
   }
 
-  const showCompactPanel = panelState === 'compact'
-  const showDetails = panelState === 'expanded'
+  const effectivePanelState = isFinished && panelState === 'minimized'
+    ? 'compact'
+    : panelState
+  const showCompactPanel = effectivePanelState === 'compact'
+  const showDetails = effectivePanelState === 'expanded'
+  const showFab = effectivePanelState === 'minimized'
 
   return (
     <section
       className={`current-processing ${isFinished ? 'is-finished' : 'is-active'} ${showDetails ? 'is-expanded' : ''}`}
     >
       <div className="current-processing__anchor">
-        <button
-          type="button"
-          className="current-processing__fab"
-          onClick={panelState === 'minimized' ? handleShowCompact : handleCardClick}
-          aria-expanded={showCompactPanel || showDetails}
-          aria-label={isFinished ? 'Open finished processing' : 'Open current processing'}
-        >
-          <span className="current-processing__fab-ring" />
-          <span className="current-processing__fab-core">
-            {isFinished ? 'Done' : `${job.overallProgress}%`}
-          </span>
-        </button>
+        {showFab ? (
+          <button
+            type="button"
+            className="current-processing__fab"
+            onClick={handleShowCompact}
+            aria-expanded={false}
+            aria-label={isFinished ? 'Open finished processing panel' : 'Open current processing panel'}
+          >
+            <span className="current-processing__fab-ring" />
+            <span className="current-processing__fab-core">
+              {isFinished ? 'Done' : `${job.overallProgress}%`}
+            </span>
+          </button>
+        ) : null}
       </div>
 
       {showCompactPanel ? (
@@ -130,14 +136,25 @@ const CurrentProcessing = ({
             </div>
           </div>
 
-          <div className="current-processing__actions">
-            <button type="button" className="current-processing__toggle" onClick={handleShowDetails}>
-              More details
-            </button>
-            <button type="button" className="current-processing__toggle" onClick={handleHideCompact}>
-              Hide
-            </button>
-          </div>
+          {isFinished ? (
+            <div className="current-processing__actions">
+              <button type="button" className="current-processing__link" onClick={onOpenFinished}>
+                Open Project
+              </button>
+              <button type="button" className="current-processing__dismiss" onClick={handleDismiss} aria-label="Dismiss finished status">
+                Dismiss
+              </button>
+            </div>
+          ) : (
+            <div className="current-processing__actions">
+              <button type="button" className="current-processing__toggle" onClick={handleShowDetails}>
+                More details
+              </button>
+              <button type="button" className="current-processing__toggle" onClick={handleHideCompact}>
+                Hide
+              </button>
+            </div>
+          )}
         </div>
       ) : null}
 
