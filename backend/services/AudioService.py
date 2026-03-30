@@ -24,7 +24,17 @@ class AudioService:
         self.file_service = file_service
         self.processor = AudioProcessor()
 
-    def process_separation(self, project_id: str, filename: str, modules_to_run: List[str], sse_message_handler, thumbnail: Optional[str] = None, display_name: Optional[str] = None) -> Dict[str, Any]:
+    def process_separation(
+        self,
+        project_id: str,
+        filename: str,
+        modules_to_run: List[str],
+        sse_message_handler,
+        thumbnail: Optional[str] = None,
+        display_name: Optional[str] = None,
+        source_type: str = "local_file",
+        job_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Runs the separation process for a project.
         """
@@ -51,18 +61,22 @@ class AudioService:
                     modules_in_order.append(dependency)
 
         if modules_in_order:
-            job_id = self._build_job_id(project_id)
-            self.project_service.create_processing_job(
-                {
-                    "id": job_id,
-                    "project_id": project_id,
-                    "state": "running",
-                    "source_type": "local_file",
-                    "source_name": filename,
-                    "requested_by": "user",
-                    "started_at": self._timestamp(),
-                }
-            )
+            if job_id is None:
+                job_id = self._build_job_id(project_id)
+                self.project_service.create_processing_job(
+                    {
+                        "id": job_id,
+                        "project_id": project_id,
+                        "state": "running",
+                        "source_type": source_type,
+                        "source_name": filename,
+                        "requested_by": "user",
+                        "download_state": "completed" if source_type == "url" else "pending",
+                        "download_progress": 100 if source_type == "url" else 0,
+                        "started_at": self._timestamp(),
+                    }
+                )
+
             self.project_service.replace_processing_batches(
                 job_id,
                 [
@@ -70,6 +84,7 @@ class AudioService:
                         "job_id": job_id,
                         "module_id": module_name,
                         "state": "pending",
+                        "progress": 0,
                         "batch_order": index,
                         "input_relative_path": self._resolve_input_relative_path(project_id, filename, module_name),
                         "output_paths": [],
@@ -92,6 +107,7 @@ class AudioService:
                         job_id,
                         batch_order,
                         "running",
+                        progress=0,
                         started_at=self._timestamp(),
                         cleanup_required=False,
                     )
@@ -102,7 +118,11 @@ class AudioService:
                         module_name=module_name,
                         input_path=input_path,
                         output_dir=output_folder,
-                        interceptor_callback=getattr(sse_message_handler, "interceptor_callback", None),
+                        interceptor_callback=self._build_batch_progress_callback(
+                            job_id,
+                            batch_order,
+                            getattr(sse_message_handler, "interceptor_callback", None),
+                        ),
                     )
                     precompute_waveforms_for_outputs(outputs, output_folder)
                     self._refresh_project_snapshot(project_id, filename, display_name=display_name, thumbnail=thumbnail)
@@ -111,6 +131,7 @@ class AudioService:
                         job_id,
                         batch_order,
                         "completed",
+                        progress=100,
                         finished_at=self._timestamp(),
                         output_paths=self._to_relative_output_paths(output_folder, outputs),
                         cleanup_required=False,
@@ -146,6 +167,35 @@ class AudioService:
             'executed_modules': snapshot['status']['executed_modules'],
             'thumbnail': snapshot['project'].get('thumbnail')
         }
+
+    def _build_batch_progress_callback(self, job_id: str, batch_order: int, callback):
+        if callback is None:
+            return None
+
+        def wrapped(message: str, event_type: str = "processing"):
+            if event_type == "processing" and "%" in message:
+                try:
+                    percentage = message.split("%")[0].strip().split()[-1]
+                    self.project_service.update_processing_batch_state(
+                        job_id,
+                        batch_order,
+                        "running",
+                        progress=int(float(percentage)),
+                    )
+                except (ValueError, TypeError):
+                    logger.debug("Unable to parse processing percentage from %s", message)
+
+            return callback(message, event_type)
+
+        return wrapped
+
+    def update_processing_download_state(self, job_id: str, state: str, progress: int):
+        self.project_service.update_processing_job_state(
+            job_id,
+            "running",
+            download_state=state,
+            download_progress=progress,
+        )
 
     def _build_job_id(self, project_id: str) -> str:
         return f"{project_id}:{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"

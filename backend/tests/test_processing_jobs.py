@@ -1,6 +1,7 @@
 from flask import Flask
 
 from persistence import Database
+from persistence.project_repository import ProjectRepository
 from routes import audio_routes
 from services.FileService import FileService
 from services.ProjectService import ProjectService
@@ -39,10 +40,25 @@ def _create_repository(library_root):
     return ProcessingJobRepository(Database(str(library_root)))
 
 
+def _seed_project_snapshot(library_root, sample_project_row):
+    database = Database(str(library_root))
+    project_repository = ProjectRepository(database)
+    project_repository.replace_project_snapshot(
+        sample_project_row,
+        [
+            {
+                "project_id": sample_project_row["id"],
+                "relative_path": "original/song.wav",
+                "role": "original",
+            }
+        ],
+    )
+
+
 def _create_audio_route_client(library_root, tmp_path, monkeypatch, repository):
     project_service = ProjectService(
         str(library_root),
-        project_repository=None,
+        project_repository=ProjectRepository(Database(str(library_root))),
         processing_job_repository=repository,
     )
     file_service = FileService(project_service, str(tmp_path / "uploads"))
@@ -81,6 +97,7 @@ def test_active_job_guard_rejects_second_running_job(
 
 def test_lifecycle_persists_job_and_batch_state_transitions(
     library_root,
+    sample_project_row,
     sample_processing_job_row,
     sample_processing_batch_rows,
 ):
@@ -104,6 +121,7 @@ def test_lifecycle_persists_job_and_batch_state_transitions(
     }
 
     repository = _create_repository(library_root)
+    _seed_project_snapshot(library_root, sample_project_row)
 
     repository.create_job(sample_processing_job_row)
     repository.replace_batches(sample_processing_job_row["id"], sample_processing_batch_rows)
@@ -147,6 +165,7 @@ def test_active_job_snapshot_returns_canonical_ordered_steps(
     sample_processing_batch_rows,
 ):
     repository = _create_repository(library_root)
+    _seed_project_snapshot(library_root, sample_project_row)
     repository.create_job(sample_processing_job_row)
     repository.replace_batches(sample_processing_job_row["id"], sample_processing_batch_rows)
 
@@ -172,12 +191,12 @@ def test_active_job_snapshot_returns_canonical_ordered_steps(
     assert active_snapshot["steps"][0] == {
         "id": "htdemucs_6s",
         "kind": "module",
-        "label": "htdemucs_6s.yaml",
+        "label": "Demucs v4: htdemucs_6s",
         "state": "completed",
         "progress": 100,
         "order": 1,
     }
-    assert active_snapshot["steps"][1]["label"] == "UVR-MDX-NET Main"
+    assert active_snapshot["steps"][1]["label"] == "Roformer Model: BS Roformer | Male-Female by aufr33"
     assert active_snapshot["steps"][1]["progress"] == 0
     assert active_snapshot["overall_progress"] == 50
 
@@ -186,10 +205,12 @@ def test_active_job_snapshot_route_returns_canonical_payload(
     library_root,
     tmp_path,
     monkeypatch,
+    sample_project_row,
     sample_processing_job_row,
     sample_processing_batch_rows,
 ):
     repository = _create_repository(library_root)
+    _seed_project_snapshot(library_root, sample_project_row)
     repository.create_job(sample_processing_job_row)
     repository.replace_batches(sample_processing_job_row["id"], sample_processing_batch_rows)
     client = _create_audio_route_client(library_root, tmp_path, monkeypatch, repository)
@@ -204,7 +225,7 @@ def test_active_job_snapshot_route_returns_canonical_payload(
     assert [step["order"] for step in payload["active_job"]["steps"]] == [1, 2]
     assert payload["active_job"]["steps"][0]["kind"] == "module"
     assert payload["active_job"]["steps"][0]["progress"] == 100
-    assert payload["active_job"]["steps"][1]["label"] == "UVR-MDX-NET Main"
+    assert payload["active_job"]["steps"][1]["label"] == "Roformer Model: BS Roformer | Male-Female by aufr33"
     assert payload["active_job"]["overall_progress"] == 50
 
 
@@ -212,10 +233,12 @@ def test_active_job_snapshot_route_includes_download_step_for_url_jobs(
     library_root,
     tmp_path,
     monkeypatch,
+    sample_project_row,
     sample_processing_job_row,
     sample_processing_batch_rows,
 ):
     repository = _create_repository(library_root)
+    _seed_project_snapshot(library_root, sample_project_row)
     repository.create_job({
         **sample_processing_job_row,
         "source_type": "url",
@@ -246,10 +269,12 @@ def test_completed_job_remains_visible_until_completion_acknowledged(
     library_root,
     tmp_path,
     monkeypatch,
+    sample_project_row,
     sample_processing_job_row,
     sample_processing_batch_rows,
 ):
     repository = _create_repository(library_root)
+    _seed_project_snapshot(library_root, sample_project_row)
     repository.create_job({
         **sample_processing_job_row,
         "state": "completed",

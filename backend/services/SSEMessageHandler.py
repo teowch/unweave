@@ -88,6 +88,13 @@ class SSEMessageHandler():
     def send_module_completed(self):
         self.send_running('module_processing', 100)
 
+    def publish_processing_updated(self, job_id: str, project_id: str, state: str):
+        self._send_raw('processing_updated', {
+            'job_id': job_id,
+            'project_id': project_id,
+            'state': state,
+        })
+
     def send_id_changed(self, new_id: str):
         self._send_raw('id_changed', {'new_id': new_id})
 

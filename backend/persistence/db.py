@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS processing_jobs (
     source_type TEXT,
     source_name TEXT,
     requested_by TEXT,
+    download_state TEXT NOT NULL DEFAULT 'pending',
+    download_progress INTEGER NOT NULL DEFAULT 0,
+    completion_acknowledged_at TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     finished_at TEXT
@@ -60,6 +63,7 @@ CREATE TABLE IF NOT EXISTS processing_batches (
             'rerunning'
         )
     ),
+    progress INTEGER NOT NULL DEFAULT 0,
     batch_order INTEGER NOT NULL,
     input_relative_path TEXT,
     output_paths TEXT NOT NULL DEFAULT '[]',
@@ -94,6 +98,7 @@ class Database:
     def bootstrap(self):
         with self.transaction() as connection:
             connection.executescript(SCHEMA)
+            self._apply_migrations(connection)
 
     def connect(self):
         connection = sqlite3.connect(self.database_path)
@@ -112,3 +117,39 @@ class Database:
             raise
         finally:
             connection.close()
+
+    def _apply_migrations(self, connection):
+        self._ensure_column(
+            connection,
+            "processing_jobs",
+            "download_state",
+            "TEXT NOT NULL DEFAULT 'pending'",
+        )
+        self._ensure_column(
+            connection,
+            "processing_jobs",
+            "download_progress",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+        self._ensure_column(
+            connection,
+            "processing_jobs",
+            "completion_acknowledged_at",
+            "TEXT",
+        )
+        self._ensure_column(
+            connection,
+            "processing_batches",
+            "progress",
+            "INTEGER NOT NULL DEFAULT 0",
+        )
+
+    def _ensure_column(self, connection, table_name, column_name, column_definition):
+        rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing_columns = {row["name"] for row in rows}
+        if column_name in existing_columns:
+            return
+
+        connection.execute(
+            f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}"
+        )

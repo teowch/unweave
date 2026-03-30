@@ -153,7 +153,10 @@ def load_model_data() -> Dict[str, Any]:
         for arch, models in data.items():
             for model_name, details in models.items():
                 if 'filename' in details:
-                    lookup[details['filename']] = details
+                    lookup[details['filename']] = {
+                        **details,
+                        'display_name': model_name,
+                    }
                     
         return lookup
     except Exception as e:

@@ -3,6 +3,7 @@ import json
 import shutil
 import threading
 from pathlib import Path
+from datetime import datetime
 from typing import List, Dict, Optional, Any
 
 from persistence.project_catalog import build_history_entry, build_project_snapshot
@@ -186,6 +187,14 @@ class ProjectService:
         if not self.processing_job_repository:
             return None
         return self.processing_job_repository.get_job_snapshot(job_id)
+
+    def acknowledge_processing_completion(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        return self.processing_job_repository.acknowledge_job_completion(
+            job_id,
+            datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
 
     def _sync_sqlite_cache(self, project_id: str) -> None:
         snapshot = self.get_sqlite_project_snapshot(project_id)

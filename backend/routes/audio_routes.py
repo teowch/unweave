@@ -48,6 +48,14 @@ def get_active_processing():
     active_snapshot = project_service.get_active_processing_job_snapshot()
     return jsonify({'active_job': active_snapshot}), 200
 
+
+@audio_bp.route('/processing/<job_id>/acknowledge', methods=['POST'])
+def acknowledge_processing_completion(job_id):
+    snapshot = project_service.acknowledge_processing_completion(job_id)
+    if not snapshot:
+        return jsonify({'error': 'Processing job not found'}), 404
+    return jsonify(snapshot), 200
+
 @audio_bp.route('/process', methods=['POST'])
 def process_audio():
     active_job_conflict = _get_active_job_conflict()
@@ -125,8 +133,29 @@ def process_url():
     try:
         with useSSEManager(sse_manager, temp_project_id) as (_sse_manager, state):
             sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            project_id = f"{timestamp}_{get_ascii_prefix(temp_project_id)}"
+            state["job_id"] = project_id
+            sse_message_handler.set_project_id(project_id)
+            output_folder = project_service.create_project_folder(project_id)
+            job_id = audio_service._build_job_id(project_id)
+
+            project_service.create_processing_job(
+                {
+                    "id": job_id,
+                    "project_id": project_id,
+                    "state": "running",
+                    "source_type": "url",
+                    "source_name": url,
+                    "requested_by": "user",
+                    "download_state": "running",
+                    "download_progress": 0,
+                    "started_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+            )
 
             downloaded_filepath, original_filename, thumbnail_url, video_title = audio_service.download_url(url, sse_message_handler)
+            audio_service.update_processing_download_state(job_id, "completed", 100)
 
             filename = sanitize_filename(original_filename)
             if filename != original_filename:
@@ -134,20 +163,22 @@ def process_url():
                 os.rename(downloaded_filepath, new_downloaded_filepath)
                 downloaded_filepath = new_downloaded_filepath
 
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            filename_no_ext = os.path.splitext(filename)[0]
-            project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}"
-            state["job_id"] = project_id
-            sse_message_handler.set_project_id(project_id)
-
-            output_folder = project_service.create_project_folder(project_id)
             persistent_filepath = os.path.join(output_folder, filename)
 
             import shutil
             shutil.move(downloaded_filepath, persistent_filepath)
             file_service.cleanup_upload_folder()
 
-            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler, thumbnail=thumbnail_url, display_name=video_title)
+            result = audio_service.process_separation(
+                project_id,
+                filename,
+                modules_to_run,
+                sse_message_handler,
+                thumbnail=thumbnail_url,
+                display_name=video_title,
+                source_type="url",
+                job_id=job_id,
+            )
             return jsonify(result), 200
 
     except Exception as e:
