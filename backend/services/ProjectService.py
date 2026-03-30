@@ -276,24 +276,37 @@ class ProjectService:
         if not snapshot:
             return False
 
-        project_id = snapshot["job"]["project_id"]
-        if not self.processing_job_repository or not self.project_repository:
-            raise RuntimeError("Recovery discard requires repository access")
+        return self.discard_project(snapshot["job"]["project_id"])
 
-        with self.processing_job_repository.database.transaction() as connection:
-            connection.execute(
-                "DELETE FROM project_files WHERE project_id = ?",
-                (project_id,),
-            )
-            connection.execute(
-                "DELETE FROM projects WHERE id = ?",
-                (project_id,),
-            )
+    def discard_project(self, project_id: str) -> bool:
+        if not self.project_repository:
+            return self.delete_project(project_id)
 
-        self.processing_job_repository.delete_jobs_for_project(project_id)
+        if self.processing_job_repository:
+            with self.processing_job_repository.database.transaction() as connection:
+                connection.execute(
+                    "DELETE FROM project_files WHERE project_id = ?",
+                    (project_id,),
+                )
+                connection.execute(
+                    "DELETE FROM projects WHERE id = ?",
+                    (project_id,),
+                )
+            self.processing_job_repository.delete_jobs_for_project(project_id)
+        else:
+            with self.project_repository.database.transaction() as connection:
+                connection.execute(
+                    "DELETE FROM project_files WHERE project_id = ?",
+                    (project_id,),
+                )
+                connection.execute(
+                    "DELETE FROM projects WHERE id = ?",
+                    (project_id,),
+                )
 
-        deleted = self.delete_project(project_id)
-        return deleted
+        self.track_sessions.pop(project_id, None)
+        self.session_history[:] = [t for t in self.session_history if t["id"] != project_id]
+        return self._delete_project_folder(project_id)
 
     def get_recovery_decision(self, job_id: str) -> Optional[Dict[str, Any]]:
         snapshot = self.get_processing_job_snapshot(job_id)
@@ -567,10 +580,15 @@ class ProjectService:
             self.session_history.insert(0, track_data)
 
     def delete_project(self, project_id: str) -> bool:
-        if project_id not in self.track_sessions:
-            return False
+        if self.project_repository:
+            return self.discard_project(project_id)
 
-        directory = self.track_sessions[project_id]['path']
+        return self._delete_project_folder(project_id)
+
+    def _delete_project_folder(self, project_id: str) -> bool:
+        directory = self.get_project_path(project_id)
+        if not directory:
+            return False
 
         try:
             resolved_directory = os.path.realpath(directory)
@@ -582,7 +600,7 @@ class ProjectService:
 
         try:
             shutil.rmtree(directory)
-            del self.track_sessions[project_id]
+            self.track_sessions.pop(project_id, None)
             self.session_history[:] = [t for t in self.session_history if t['id'] != project_id]
             return True
         except Exception as e:

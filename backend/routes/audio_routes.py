@@ -84,6 +84,29 @@ def recover_processing(job_id):
         return jsonify(payload), 409
 
 
+@audio_bp.route('/processing/<job_id>/discard', methods=['POST'])
+def discard_processing(job_id):
+    snapshot = project_service.get_processing_job_snapshot(job_id)
+    if not snapshot:
+        return jsonify({'error': 'Processing job not found'}), 404
+
+    project_id = snapshot["job"]["project_id"]
+    discarded = project_service.discard_recoverable_job(job_id)
+    if not discarded:
+        return jsonify({'error': 'Processing job not found'}), 404
+
+    sse_manager.publish(
+        project_id,
+        "processing_updated",
+        {
+            "job_id": job_id,
+            "project_id": project_id,
+            "state": "discarded",
+        },
+    )
+    return jsonify({"discarded": True}), 200
+
+
 @audio_bp.route('/processing/<job_id>/acknowledge', methods=['POST'])
 def acknowledge_processing_completion(job_id):
     snapshot = project_service.acknowledge_processing_completion(job_id)

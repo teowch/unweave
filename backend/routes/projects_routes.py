@@ -87,7 +87,7 @@ def get_project(project_id):
 @projects_bp.route('/delete/<folder_id>', methods=['DELETE'])
 def delete_session(folder_id):
     try:
-        success = project_service.delete_project(folder_id)
+        success = project_service.discard_project(folder_id)
         if success:
             return jsonify({'message': 'Session deleted successfully'}), 200
         else:
