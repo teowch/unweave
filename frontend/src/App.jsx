@@ -297,7 +297,19 @@ function App() {
           }
         }
 
+        if (normalized.isFinished) {
+          closeActiveSse()
+          activeJobRef.current = null
+          setActiveJob(null)
+          setCompletedJob((current) => (
+            current?.jobId === normalized.jobId ? current : normalized
+          ))
+          setProcessingRefreshError(null)
+          return normalized
+        }
+
         activeJobRef.current = normalized
+        setCompletedJob(null)
         setActiveJob(normalized)
         setProcessingRefreshError(null)
         subscribeToActiveJob(normalized.projectId)
