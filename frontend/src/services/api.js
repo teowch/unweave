@@ -237,7 +237,7 @@ export const acknowledgeProcessing = async (jobId) => {
  * @returns {Promise<Object>} Response payload
  */
 export const recoverProcessing = async (jobId, mode) => {
-    const response = await axios.post(`${API_BASE}/processing/${jobId}/recover`, { mode });
+    const response = await axios.post(`${API_BASE}/processing/${jobId}/recover`, { recoveryMode: mode });
     return response.data;
 };
 
