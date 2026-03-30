@@ -54,6 +54,15 @@ def acknowledge_processing_completion(job_id):
     snapshot = project_service.acknowledge_processing_completion(job_id)
     if not snapshot:
         return jsonify({'error': 'Processing job not found'}), 404
+    sse_manager.publish(
+        snapshot["job"]["project_id"],
+        "processing_updated",
+        {
+            "job_id": snapshot["job"]["id"],
+            "project_id": snapshot["job"]["project_id"],
+            "state": snapshot["job"]["state"],
+        },
+    )
     return jsonify(snapshot), 200
 
 @audio_bp.route('/process', methods=['POST'])
@@ -153,9 +162,19 @@ def process_url():
                     "started_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
                 }
             )
+            sse_message_handler.publish_processing_updated(job_id, project_id, "running")
 
-            downloaded_filepath, original_filename, thumbnail_url, video_title = audio_service.download_url(url, sse_message_handler)
-            audio_service.update_processing_download_state(job_id, "completed", 100)
+            downloaded_filepath, original_filename, thumbnail_url, video_title = audio_service.download_url(
+                url,
+                sse_message_handler,
+                job_id=job_id,
+            )
+            audio_service.update_processing_download_state(
+                job_id,
+                "completed",
+                100,
+                sse_message_handler=sse_message_handler,
+            )
 
             filename = sanitize_filename(original_filename)
             if filename != original_filename:

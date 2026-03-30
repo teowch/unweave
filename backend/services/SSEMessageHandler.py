@@ -16,15 +16,7 @@ class SSEMessageHandler():
         self.sse_manager.publish(self.project_id, event, data)
 
     def _send(self, event: str, status: str, message: str):
-        """
-        Sends a message to the client.
-        event can be: 'module_processing', 'download', 'model_downloading'
-        status can be: 'running', 'resolving_dependency', 'error'
-        if status is 'resolving_dependency', message should be the name of the module that is being resolved
-        if status is 'running', message should be the percentage (without %) of the module that is being processed
-        if status is 'error', message should be the error message
-        """
-        self._send_raw(event, {'module': self.module, 'status': status, 'message': message})
+        return None
 
     def interceptor_callback(self, message: str, event_type: str = "processing"):
         """
@@ -35,28 +27,12 @@ class SSEMessageHandler():
             event_type: "model_download" or "processing"
         """
         if event_type == "model_download":
-            # Model download progress - parse download percentage/status
-            if '%' in message:
-                # Some download libraries output percentage
-                try:
-                    percentage = message.split('%')[0].strip().split()[-1]
-                    self.send_model_downloading(percentage)
-                except:
-                    self.send_model_downloading(message)
-            elif 'MB' in message or 'KB' in message or 'Downloading' in message.lower():
-                # Download status message
-                self.send_model_downloading(message)
+            return
         else:
-            # Processing progress - original behavior
-            if '%' not in message:
-                return
-            percentage = message.split('%')[0]
-            self.send_running('module_processing', percentage)
+            return
 
     def download_callback(self, message: dict):
-        if message['status'] == 'downloading':
-            percentage = message.get('_percent_str').split('.')[0]
-            self.send_running('download', percentage)
+        return None
 
     def send_error(self, message: str):
         self._send('error', 'error', message)
@@ -68,22 +44,10 @@ class SSEMessageHandler():
         self._send(event, 'running', percentage)
 
     def send_model_downloading(self, progress: str):
-        """Send model downloading progress to client."""
-        self._send_raw('model_downloading', {
-            'module': self.module,
-            'model': self.current_model,
-            'status': 'downloading',
-            'progress': progress
-        })
+        return None
 
     def send_model_download_complete(self):
-        """Signal that model download is complete."""
-        self._send_raw('model_downloading', {
-            'module': self.module,
-            'model': self.current_model,
-            'status': 'complete',
-            'progress': '100'
-        })
+        return None
 
     def send_module_completed(self):
         self.send_running('module_processing', 100)

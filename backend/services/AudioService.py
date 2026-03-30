@@ -76,6 +76,12 @@ class AudioService:
                         "started_at": self._timestamp(),
                     }
                 )
+                self._publish_processing_updated(
+                    sse_message_handler,
+                    job_id,
+                    project_id,
+                    "running",
+                )
 
             self.project_service.replace_processing_batches(
                 job_id,
@@ -97,6 +103,12 @@ class AudioService:
                     for index, module_name in enumerate(modules_in_order, start=1)
                 ],
             )
+            self._publish_processing_updated(
+                sse_message_handler,
+                job_id,
+                project_id,
+                "running",
+            )
 
             try:
                 for batch_order, module_name in enumerate(modules_in_order, start=1):
@@ -111,6 +123,12 @@ class AudioService:
                         started_at=self._timestamp(),
                         cleanup_required=False,
                     )
+                    self._publish_processing_updated(
+                        sse_message_handler,
+                        job_id,
+                        project_id,
+                        "running",
+                    )
                     sse_message_handler.set_module(module_name)
                     sse_message_handler.set_current_model(config["model"])
 
@@ -121,6 +139,7 @@ class AudioService:
                         interceptor_callback=self._build_batch_progress_callback(
                             job_id,
                             batch_order,
+                            sse_message_handler,
                             getattr(sse_message_handler, "interceptor_callback", None),
                         ),
                     )
@@ -136,11 +155,23 @@ class AudioService:
                         output_paths=self._to_relative_output_paths(output_folder, outputs),
                         cleanup_required=False,
                     )
+                    self._publish_processing_updated(
+                        sse_message_handler,
+                        job_id,
+                        project_id,
+                        "running",
+                    )
 
                 self.project_service.update_processing_job_state(
                     job_id,
                     "completed",
                     finished_at=self._timestamp(),
+                )
+                self._publish_processing_updated(
+                    sse_message_handler,
+                    job_id,
+                    project_id,
+                    "completed",
                 )
             except Exception as exc:
                 self.project_service.update_processing_batch_state(
@@ -156,6 +187,12 @@ class AudioService:
                     "failed",
                     finished_at=self._timestamp(),
                 )
+                self._publish_processing_updated(
+                    sse_message_handler,
+                    job_id,
+                    project_id,
+                    "failed",
+                )
                 raise
 
         snapshot = self.project_service.get_sqlite_project_snapshot(project_id)
@@ -168,10 +205,7 @@ class AudioService:
             'thumbnail': snapshot['project'].get('thumbnail')
         }
 
-    def _build_batch_progress_callback(self, job_id: str, batch_order: int, callback):
-        if callback is None:
-            return None
-
+    def _build_batch_progress_callback(self, job_id: str, batch_order: int, sse_message_handler, callback):
         def wrapped(message: str, event_type: str = "processing"):
             if event_type == "processing" and "%" in message:
                 try:
@@ -182,20 +216,38 @@ class AudioService:
                         "running",
                         progress=int(float(percentage)),
                     )
+                    snapshot = self.project_service.get_processing_job_snapshot(job_id)
+                    if snapshot:
+                        self._publish_processing_updated(
+                            sse_message_handler,
+                            job_id,
+                            snapshot["job"]["project_id"],
+                            "running",
+                        )
                 except (ValueError, TypeError):
                     logger.debug("Unable to parse processing percentage from %s", message)
 
-            return callback(message, event_type)
+            if callback is not None:
+                return callback(message, event_type)
+            return None
 
         return wrapped
 
-    def update_processing_download_state(self, job_id: str, state: str, progress: int):
+    def update_processing_download_state(self, job_id: str, state: str, progress: int, sse_message_handler=None):
         self.project_service.update_processing_job_state(
             job_id,
             "running",
             download_state=state,
             download_progress=progress,
         )
+        snapshot = self.project_service.get_processing_job_snapshot(job_id)
+        if snapshot:
+            self._publish_processing_updated(
+                sse_message_handler,
+                job_id,
+                snapshot["job"]["project_id"],
+                snapshot["job"]["state"],
+            )
 
     def _build_job_id(self, project_id: str) -> str:
         return f"{project_id}:{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
@@ -295,7 +347,8 @@ class AudioService:
             return "waveform"
         return "other"
 
-    def download_url(self, url, sse_message_handler):
+    def download_url(self, url, sse_message_handler, job_id: Optional[str] = None):
+        progress_hook = self._build_download_progress_callback(job_id, sse_message_handler)
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': os.path.join('uploads', '%(title)s.%(ext)s'),
@@ -307,7 +360,7 @@ class AudioService:
             'noprogress': True,
             'no_color': True,
             'noplaylist': True,
-            'progress_hooks': [sse_message_handler.download_callback],
+            'progress_hooks': [progress_hook],
             'writethumbnail': True,
         }
 
@@ -334,6 +387,31 @@ class AudioService:
             raise Exception("Download failed")
 
         return downloaded_filepath, filename, thumbnail, title
+
+    def _build_download_progress_callback(self, job_id: Optional[str], sse_message_handler):
+        def callback(message: dict):
+            if message.get('status') != 'downloading' or job_id is None:
+                return None
+
+            raw_percent = message.get('_percent_str') or "0"
+            try:
+                progress = int(float(raw_percent.replace('%', '').strip()))
+            except ValueError:
+                progress = 0
+
+            self.update_processing_download_state(
+                job_id,
+                "running",
+                progress,
+                sse_message_handler=sse_message_handler,
+            )
+            return None
+
+        return callback
+
+    def _publish_processing_updated(self, sse_message_handler, job_id: str, project_id: str, state: str):
+        if sse_message_handler and hasattr(sse_message_handler, "publish_processing_updated"):
+            sse_message_handler.publish_processing_updated(job_id, project_id, state)
 
     def unify_tracks(self, project_id: str, track_names: List[str]) -> str:
         """

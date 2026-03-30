@@ -55,14 +55,14 @@ def _seed_project_snapshot(library_root, sample_project_row):
     )
 
 
-def _create_audio_route_client(library_root, tmp_path, monkeypatch, repository):
+def _create_audio_route_client(library_root, tmp_path, monkeypatch, repository, sse_manager=None):
     project_service = ProjectService(
         str(library_root),
         project_repository=ProjectRepository(Database(str(library_root))),
         processing_job_repository=repository,
     )
     file_service = FileService(project_service, str(tmp_path / "uploads"))
-    sse_manager = SSEManager()
+    sse_manager = sse_manager or SSEManager()
 
     monkeypatch.setattr(audio_routes, "project_service", project_service)
     monkeypatch.setattr(audio_routes, "file_service", file_service)
@@ -297,6 +297,53 @@ def test_completed_job_remains_visible_until_completion_acknowledged(
     assert ack_response.get_json()["job"]["completion_acknowledged_at"] is not None
     assert after_ack_response.status_code == 200
     assert after_ack_response.get_json()["active_job"] is None
+
+
+def test_acknowledgement_route_publishes_processing_updated(
+    library_root,
+    tmp_path,
+    monkeypatch,
+    sample_project_row,
+    sample_processing_job_row,
+    sample_processing_batch_rows,
+):
+    repository = _create_repository(library_root)
+    _seed_project_snapshot(library_root, sample_project_row)
+    repository.create_job({
+        **sample_processing_job_row,
+        "state": "completed",
+        "finished_at": "2026-03-27T12:05:00Z",
+    })
+    repository.replace_batches(sample_processing_job_row["id"], sample_processing_batch_rows)
+
+    published = []
+
+    class StubSSEManager:
+        def publish(self, project_id, event, data):
+            published.append((project_id, event, data))
+
+    client = _create_audio_route_client(
+        library_root,
+        tmp_path,
+        monkeypatch,
+        repository,
+        sse_manager=StubSSEManager(),
+    )
+
+    response = client.post(f"/api/processing/{sample_processing_job_row['id']}/acknowledge")
+
+    assert response.status_code == 200
+    assert published == [
+        (
+            sample_processing_job_row["project_id"],
+            "processing_updated",
+            {
+                "job_id": sample_processing_job_row["id"],
+                "project_id": sample_processing_job_row["project_id"],
+                "state": "completed",
+            },
+        )
+    ]
 
 
 def test_processing_lifecycle_sse_uses_invalidation_event_name_only():
