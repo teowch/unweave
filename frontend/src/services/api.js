@@ -221,6 +221,16 @@ export const getActiveJob = async () => {
 };
 
 /**
+ * Acknowledge a finished processing snapshot so it stops appearing globally.
+ * @param {string} jobId - Processing job ID
+ * @returns {Promise<Object>} Response payload
+ */
+export const acknowledgeProcessing = async (jobId) => {
+    const response = await axios.post(`${API_BASE}/processing/${jobId}/acknowledge`);
+    return response.data;
+};
+
+/**
  * Get system information for settings page
  * @returns {Promise<Object>} System info object
  */

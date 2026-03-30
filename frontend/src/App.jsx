@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { getActiveJob, getHistory, getProject, isElectron, unifyStems } from './services/api'
+import { acknowledgeProcessing, getActiveJob, getHistory, getProject, isElectron, unifyStems } from './services/api'
 import { createSSEConnection } from './services/sse'
 import './App.css'
 
@@ -17,59 +17,40 @@ import CurrentProcessing from './components/CurrentProcessing/CurrentProcessing'
 import ProcessingToast from './components/ProcessingToast/ProcessingToast'
 
 const CONSISTENCY_RETRY_MS = 1500
-
-const toTitleCase = (value = '') => (
-  value
-    .split(/[_\s-]+/)
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ')
-)
-
-const normalizeProgressValue = (value) => {
-  const parsed = Number.parseInt(value, 10)
-  if (Number.isNaN(parsed)) {
-    return 0
-  }
-
-  return Math.max(0, Math.min(100, parsed))
-}
+const ACTIVE_JOB_HYDRATION_ATTEMPTS = 6
+const ACTIVE_JOB_HYDRATION_DELAY_MS = 250
 
 const normalizeActiveJobSnapshot = (snapshot) => {
   if (!snapshot?.job) {
     return null
   }
 
-  const batches = Array.isArray(snapshot.batches) ? snapshot.batches : []
-  const completedBatchCount = batches.filter((batch) => batch.state === 'completed').length
-  const totalBatchCount = batches.length
-  const currentBatch = batches.find((batch) => batch.state === 'running')
-    || batches.find((batch) => batch.state === 'pending')
-    || batches[batches.length - 1]
+  const steps = Array.isArray(snapshot.steps)
+    ? [...snapshot.steps].sort((left, right) => (left.order || 0) - (right.order || 0))
+    : []
+  const currentStep = steps.find((step) => step.state === 'running')
+    || steps[steps.length - 1]
     || null
-  const currentBatchLabel = currentBatch?.module_name
-    || currentBatch?.module_id
-    || 'Preparing'
+  const overallProgress = Number.isFinite(snapshot.overall_progress)
+    ? Math.max(0, Math.min(100, Math.round(snapshot.overall_progress)))
+    : 0
 
   return {
     jobId: snapshot.job.id,
     projectId: snapshot.job.project_id,
     projectName: snapshot.project?.name || snapshot.job.source_name || 'Untitled Project',
     state: snapshot.job.state,
-    batches,
-    currentBatchLabel,
-    overallProgress: totalBatchCount > 0
-      ? Math.round((completedBatchCount / totalBatchCount) * 100)
-      : 0,
-    completedBatchCount,
-    totalBatchCount,
-    statusText: toTitleCase(snapshot.job.state || 'processing'),
-    downloadProgress: null,
-    modelDownloading: null,
-    moduleProgress: {},
-    lastEvent: null,
+    completionAcknowledgedAt: snapshot.job.completion_acknowledged_at || null,
+    steps,
+    currentStep,
+    overallProgress,
+    isFinished: snapshot.job.state === 'completed',
   }
 }
+
+const wait = (delay) => new Promise((resolve) => {
+  window.setTimeout(resolve, delay)
+})
 
 const isConsistencyRetryable = (error) => {
   const status = error?.response?.status
@@ -231,11 +212,13 @@ function App() {
   const [completedJob, setCompletedJob] = useState(null)
   const [lastCompletedJob, setLastCompletedJob] = useState(null)
   const [processingToast, setProcessingToast] = useState(null)
+  const [processingRefreshError, setProcessingRefreshError] = useState(null)
   const [setupRequired, setSetupRequired] = useState(() => {
     if (!isElectron || !window.electronAPI) return false
     return window.electronAPI.isSetupRequired === true
   })
   const activeSseRef = useRef(null)
+  const activeJobRef = useRef(null)
   const completionToastKeyRef = useRef(null)
   const hydrateActiveProcessingRef = useRef(null)
 
@@ -246,27 +229,6 @@ function App() {
     }
   }, [])
 
-  const updateActiveJob = useCallback((updater) => {
-    setActiveJob((current) => {
-      if (!current) {
-        return current
-      }
-
-      const next = typeof updater === 'function'
-        ? updater(current)
-        : updater
-
-      if (!next) {
-        return next
-      }
-
-      return {
-        ...current,
-        ...next,
-      }
-    })
-  }, [])
-
   const subscribeToActiveJob = useCallback((projectId) => {
     if (!projectId) {
       closeActiveSse()
@@ -275,116 +237,84 @@ function App() {
 
     closeActiveSse()
     activeSseRef.current = createSSEConnection(projectId, {
-      onDownloadProgress: (data) => {
-        const percentage = normalizeProgressValue(data?.message)
-        updateActiveJob({
-          downloadProgress: {
-            percentage,
-            status: data?.status || 'running',
-          },
-          statusText: 'Downloading',
-          lastEvent: 'download',
-        })
+      onProcessingUpdated: async () => {
+        if (hydrateActiveProcessingRef.current) {
+          await hydrateActiveProcessingRef.current()
+        }
       },
-      onModelDownloading: (data) => {
-        updateActiveJob({
-          modelDownloading: data?.status === 'complete'
-            ? null
-            : {
-                model: data?.model || null,
-                status: data?.status || 'downloading',
-                progress: data?.progress || null,
-              },
-          lastEvent: 'model_downloading',
-        })
-      },
-      onModuleProgress: (data) => {
-        const moduleId = data?.module
-        if (!moduleId) {
+      onIdChanged: async (data) => {
+        if (!data?.new_id) {
           return
         }
 
-        updateActiveJob((current) => {
-          const percentage = normalizeProgressValue(data?.message)
-          const nextModuleProgress = {
-            ...current.moduleProgress,
-            [moduleId]: {
-              percentage,
-              status: data?.status || 'running',
-              dependencyName: data?.status === 'resolving_dependency' ? data?.message || '' : '',
-            },
-          }
-          const batchLabel = current.batches.find((batch) => batch.module_id === moduleId)?.module_name
-            || current.batches.find((batch) => batch.module_id === moduleId)?.module_id
-            || moduleId
-
-          return {
-            moduleProgress: nextModuleProgress,
-            currentBatchLabel: batchLabel,
-            statusText: data?.status === 'resolving_dependency'
-              ? `Waiting on ${data?.message || 'dependency'}`
-              : 'Processing',
-            modelDownloading: null,
-            lastEvent: 'module_processing',
-          }
-        })
+        if (hydrateActiveProcessingRef.current) {
+          await hydrateActiveProcessingRef.current(data.new_id)
+        }
       },
       onError: (data) => {
-        updateActiveJob({
-          state: 'failed',
-          statusText: data?.message || 'Processing failed',
-          lastEvent: 'error',
-        })
-      },
-      onDone: async () => {
-        closeActiveSse()
-        if (hydrateActiveProcessingRef.current) {
-          const refreshedJob = await hydrateActiveProcessingRef.current()
-          if (refreshedJob) {
-            return
-          }
+        if (data?.message === 'unknown job_id') {
+          return
         }
 
-        setActiveJob((current) => {
-          if (current) {
-            setCompletedJob({
-              ...current,
-              state: 'completed',
-              statusText: 'Finished',
-              overallProgress: 100,
-              completedBatchCount: current.totalBatchCount || current.completedBatchCount,
-            })
-          }
-
-          return null
-        })
+        console.error('Active processing stream error', data)
+      },
+      onDone: async () => {
+        if (hydrateActiveProcessingRef.current) {
+          await hydrateActiveProcessingRef.current()
+        }
       },
       onConnectionError: (error) => {
         console.error('Failed to subscribe to active processing updates', error)
       },
     })
-  }, [closeActiveSse, updateActiveJob])
+  }, [closeActiveSse])
 
-  const hydrateActiveProcessing = useCallback(async () => {
-    try {
-      const response = await getActiveJob()
-      const normalized = normalizeActiveJobSnapshot(response?.active_job)
+  const hydrateActiveProcessing = useCallback(async (expectedProjectId = null) => {
+    let lastError = null
 
-      if (!normalized) {
-        closeActiveSse()
-        setActiveJob(null)
-        return null
+    for (let attempt = 0; attempt < ACTIVE_JOB_HYDRATION_ATTEMPTS; attempt += 1) {
+      try {
+        const response = await getActiveJob()
+        const normalized = normalizeActiveJobSnapshot(response?.active_job)
+
+        if (!normalized) {
+          if (expectedProjectId && attempt < ACTIVE_JOB_HYDRATION_ATTEMPTS - 1) {
+            await wait(ACTIVE_JOB_HYDRATION_DELAY_MS)
+            continue
+          }
+
+          closeActiveSse()
+          activeJobRef.current = null
+          setActiveJob(null)
+          setProcessingRefreshError(null)
+          return null
+        }
+
+        if (expectedProjectId && normalized.projectId !== expectedProjectId) {
+          if (attempt < ACTIVE_JOB_HYDRATION_ATTEMPTS - 1) {
+            await wait(ACTIVE_JOB_HYDRATION_DELAY_MS)
+            continue
+          }
+        }
+
+        activeJobRef.current = normalized
+        setActiveJob(normalized)
+        setProcessingRefreshError(null)
+        subscribeToActiveJob(normalized.projectId)
+        return normalized
+      } catch (error) {
+        lastError = error
+
+        if (attempt < ACTIVE_JOB_HYDRATION_ATTEMPTS - 1) {
+          await wait(ACTIVE_JOB_HYDRATION_DELAY_MS)
+          continue
+        }
       }
-
-      setActiveJob(normalized)
-      subscribeToActiveJob(normalized.projectId)
-      return normalized
-    } catch (error) {
-      console.error('Failed to load active processing snapshot', error)
-      closeActiveSse()
-      setActiveJob(null)
-      return null
     }
+
+    console.error('Failed to load active processing snapshot', lastError)
+    setProcessingRefreshError(lastError?.userMessage || lastError?.message || 'Processing status could not be refreshed.')
+    return null
   }, [closeActiveSse, subscribeToActiveJob])
 
   useEffect(() => {
@@ -456,7 +386,7 @@ function App() {
   }, [closeActiveSse, hydrateActiveProcessing, setupRequired])
 
   useEffect(() => {
-    if (!completedJob) {
+    if (!completedJob?.isFinished) {
       return undefined
     }
 
@@ -494,40 +424,90 @@ function App() {
     navigate('/split')
   }, [navigate])
 
-  const handleProcessingStarted = useCallback(async (snapshot = null) => {
+  const handleProcessingStarted = useCallback(async (startPayload = null) => {
+    const snapshot = startPayload?.job ? startPayload : null
+    const expectedProjectId = typeof startPayload === 'string'
+      ? startPayload
+      : startPayload?.projectId || null
     const normalized = normalizeActiveJobSnapshot(snapshot)
 
     if (normalized) {
       setLastCompletedJob(null)
       setProcessingToast(null)
       setCompletedJob(null)
+      setProcessingRefreshError(null)
+      activeJobRef.current = normalized
       setActiveJob(normalized)
       subscribeToActiveJob(normalized.projectId)
       return normalized
     }
 
-    const hydrated = await hydrateActiveProcessing()
+    const hydrated = await hydrateActiveProcessing(expectedProjectId)
     if (hydrated) {
       setLastCompletedJob(null)
       setProcessingToast(null)
       setCompletedJob(null)
+      setProcessingRefreshError(null)
     }
     return hydrated
   }, [hydrateActiveProcessing, subscribeToActiveJob])
 
-  const handleOpenCompletedProject = () => {
+  const acknowledgeFinishedJob = useCallback(async (job) => {
+    if (!job?.jobId) {
+      return true
+    }
+
+    try {
+      await acknowledgeProcessing(job.jobId)
+      setProcessingRefreshError(null)
+      return true
+    } catch (error) {
+      console.error('Failed to acknowledge finished processing', error)
+      setProcessingRefreshError(
+        error?.userMessage
+        || error?.response?.data?.error
+        || 'Processing status could not be refreshed.'
+      )
+      return false
+    }
+  }, [])
+
+  const handleOpenCompletedProject = useCallback(async () => {
     if (!lastCompletedJob?.projectId) {
       return
     }
 
-    setProcessingToast(null)
-    navigate(`/library/${lastCompletedJob.projectId}`)
-  }
+    const acknowledged = await acknowledgeFinishedJob(lastCompletedJob)
+    if (!acknowledged) {
+      return
+    }
 
-  const handleDismissCompletedState = useCallback(() => {
     setLastCompletedJob(null)
     setProcessingToast(null)
-  }, [])
+    navigate(`/library/${lastCompletedJob.projectId}`)
+  }, [acknowledgeFinishedJob, lastCompletedJob, navigate])
+
+  const handleDismissCompletedState = useCallback(async () => {
+    if (lastCompletedJob) {
+      const acknowledged = await acknowledgeFinishedJob(lastCompletedJob)
+      if (!acknowledged) {
+        return
+      }
+    }
+
+    setLastCompletedJob(null)
+    setProcessingToast(null)
+  }, [acknowledgeFinishedJob, lastCompletedJob])
+
+  const handleProcessingReset = useCallback(() => {
+    closeActiveSse()
+    activeJobRef.current = null
+    setActiveJob(null)
+    setCompletedJob(null)
+    setLastCompletedJob(null)
+    setProcessingToast(null)
+    setProcessingRefreshError(null)
+  }, [closeActiveSse])
 
   const handleUnify = async (trackId, selectedStems) => {
     if (!selectedStems || selectedStems.length === 0) return alert('Select stems to unify first.')
@@ -573,8 +553,10 @@ function App() {
                   <UploadView
                     onUploadSuccess={refreshLibrary}
                     activeJob={activeJob}
+                    processingRefreshError={processingRefreshError}
                     onProcessingStarted={handleProcessingStarted}
                     onProcessingFinished={hydrateActiveProcessing}
+                    onProcessingReset={handleProcessingReset}
                   />
                 }
               />

@@ -18,7 +18,7 @@ const ProcessingToast = ({ job, onOpenProject, onDismiss }) => {
             Open Project
           </button>
           <button type="button" className="processing-toast__dismiss" onClick={onDismiss} aria-label="Dismiss finished status">
-            Later
+            Open Later
           </button>
         </div>
       </div>
