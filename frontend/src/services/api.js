@@ -231,6 +231,27 @@ export const acknowledgeProcessing = async (jobId) => {
 };
 
 /**
+ * Recover interrupted processing using the selected backend recovery mode.
+ * @param {string} jobId - Processing job ID
+ * @param {'safe_resume'|'rerun_from_source'|'discard_only'} mode - Recovery path
+ * @returns {Promise<Object>} Response payload
+ */
+export const recoverProcessing = async (jobId, mode) => {
+    const response = await axios.post(`${API_BASE}/processing/${jobId}/recover`, { mode });
+    return response.data;
+};
+
+/**
+ * Discard interrupted processing and delete the backing project.
+ * @param {string} jobId - Processing job ID
+ * @returns {Promise<Object>} Response payload
+ */
+export const discardProcessing = async (jobId) => {
+    const response = await axios.post(`${API_BASE}/processing/${jobId}/discard`);
+    return response.data;
+};
+
+/**
  * Get system information for settings page
  * @returns {Promise<Object>} System info object
  */
