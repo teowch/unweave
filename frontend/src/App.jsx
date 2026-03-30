@@ -302,7 +302,12 @@ function App() {
           activeJobRef.current = null
           setActiveJob(null)
           setCompletedJob((current) => (
-            current?.jobId === normalized.jobId ? current : normalized
+            current?.jobId === normalized.jobId
+              ? current
+              : {
+                  ...normalized,
+                  completedFromPath: location.pathname,
+                }
           ))
           setProcessingRefreshError(null)
           return normalized
@@ -327,7 +332,7 @@ function App() {
     console.error('Failed to load active processing snapshot', lastError)
     setProcessingRefreshError(lastError?.userMessage || lastError?.message || 'Processing status could not be refreshed.')
     return null
-  }, [closeActiveSse, subscribeToActiveJob])
+  }, [closeActiveSse, location.pathname, subscribeToActiveJob])
 
   useEffect(() => {
     hydrateActiveProcessingRef.current = hydrateActiveProcessing
@@ -406,7 +411,7 @@ function App() {
       refreshLibrary()
       setLastCompletedJob(completedJob)
 
-      if (location.pathname === '/split') {
+      if (completedJob.completedFromPath === '/split') {
         setProcessingToast(null)
         setCompletedJob(null)
         navigate(`/library/${completedJob.projectId}`)
@@ -428,7 +433,7 @@ function App() {
     return () => {
       window.clearTimeout(completionTimeout)
     }
-  }, [completedJob, location.pathname, navigate, refreshLibrary])
+  }, [completedJob, navigate, refreshLibrary])
 
   const hasGlobalProcessingState = Boolean(activeJob || lastCompletedJob || processingToast)
 
