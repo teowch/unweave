@@ -120,6 +120,10 @@ const UploadView = ({
                     return;
                 }
 
+                if (onProcessingStarted) {
+                    await onProcessingStarted(tempProjectId);
+                }
+
                 await processFile(file, modulesArray, tempProjectId);
             } else {
                 if (!url) {
@@ -127,11 +131,11 @@ const UploadView = ({
                     return;
                 }
 
-                await processUrl(url, modulesArray, tempProjectId);
-            }
+                if (onProcessingStarted) {
+                    await onProcessingStarted(tempProjectId);
+                }
 
-            if (onProcessingStarted) {
-                await onProcessingStarted(tempProjectId);
+                await processUrl(url, modulesArray, tempProjectId);
             }
 
             if (onUploadSuccess) {

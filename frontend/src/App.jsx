@@ -454,6 +454,22 @@ function App() {
       return normalized
     }
 
+    if (typeof startPayload === 'string' && expectedProjectId) {
+      setLastCompletedJob(null)
+      setProcessingToast(null)
+      setCompletedJob(null)
+      setProcessingRefreshError(null)
+      subscribeToActiveJob(expectedProjectId)
+      const hydrated = await hydrateActiveProcessing()
+      if (hydrated) {
+        setLastCompletedJob(null)
+        setProcessingToast(null)
+        setCompletedJob(null)
+        setProcessingRefreshError(null)
+      }
+      return hydrated
+    }
+
     const hydrated = await hydrateActiveProcessing(expectedProjectId)
     if (hydrated) {
       setLastCompletedJob(null)
