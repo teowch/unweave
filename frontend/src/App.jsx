@@ -14,7 +14,6 @@ import SetupView from './components/SetupView/SetupView'
 import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
 import CurrentProcessing from './components/CurrentProcessing/CurrentProcessing'
-import ProcessingToast from './components/ProcessingToast/ProcessingToast'
 
 const CONSISTENCY_RETRY_MS = 1500
 const ACTIVE_JOB_HYDRATION_ATTEMPTS = 6
@@ -211,7 +210,6 @@ function App() {
   const [activeJob, setActiveJob] = useState(null)
   const [completedJob, setCompletedJob] = useState(null)
   const [lastCompletedJob, setLastCompletedJob] = useState(null)
-  const [processingToast, setProcessingToast] = useState(null)
   const [processingRefreshError, setProcessingRefreshError] = useState(null)
   const [setupRequired, setSetupRequired] = useState(() => {
     if (!isElectron || !window.electronAPI) return false
@@ -219,7 +217,6 @@ function App() {
   })
   const activeSseRef = useRef(null)
   const activeJobRef = useRef(null)
-  const completionToastKeyRef = useRef(null)
   const hydrateActiveProcessingRef = useRef(null)
 
   const closeActiveSse = useCallback(() => {
@@ -422,19 +419,9 @@ function App() {
         completedJob.completedFromPath === '/split'
         && completedJob.completionSource === 'transition'
       ) {
-        setProcessingToast(null)
         setCompletedJob(null)
         navigate(`/library/${completedJob.projectId}`)
         return
-      }
-
-      if (completionToastKeyRef.current !== completedJob.jobId) {
-        completionToastKeyRef.current = completedJob.jobId
-        setProcessingToast({
-          jobId: completedJob.jobId,
-          projectId: completedJob.projectId,
-          projectName: completedJob.projectName,
-        })
       }
 
       setCompletedJob(null)
@@ -445,7 +432,7 @@ function App() {
     }
   }, [completedJob, navigate, refreshLibrary])
 
-  const hasGlobalProcessingState = Boolean(activeJob || lastCompletedJob || processingToast)
+  const hasGlobalProcessingState = Boolean(activeJob || lastCompletedJob)
 
   const handleOpenActiveProcessing = useCallback(() => {
     navigate('/split')
@@ -460,7 +447,6 @@ function App() {
 
     if (normalized) {
       setLastCompletedJob(null)
-      setProcessingToast(null)
       setCompletedJob(null)
       setProcessingRefreshError(null)
       activeJobRef.current = normalized
@@ -471,14 +457,12 @@ function App() {
 
     if (typeof startPayload === 'string' && expectedProjectId) {
       setLastCompletedJob(null)
-      setProcessingToast(null)
       setCompletedJob(null)
       setProcessingRefreshError(null)
       subscribeToActiveJob(expectedProjectId)
       const hydrated = await hydrateActiveProcessing(null, { preserveSubscriptionOnEmpty: true })
       if (hydrated) {
         setLastCompletedJob(null)
-        setProcessingToast(null)
         setCompletedJob(null)
         setProcessingRefreshError(null)
       }
@@ -488,7 +472,6 @@ function App() {
     const hydrated = await hydrateActiveProcessing(expectedProjectId)
     if (hydrated) {
       setLastCompletedJob(null)
-      setProcessingToast(null)
       setCompletedJob(null)
       setProcessingRefreshError(null)
     }
@@ -526,7 +509,6 @@ function App() {
     }
 
     setLastCompletedJob(null)
-    setProcessingToast(null)
     navigate(`/library/${lastCompletedJob.projectId}`)
   }, [acknowledgeFinishedJob, lastCompletedJob, navigate])
 
@@ -539,7 +521,6 @@ function App() {
     }
 
     setLastCompletedJob(null)
-    setProcessingToast(null)
   }, [acknowledgeFinishedJob, lastCompletedJob])
 
   const handleProcessingReset = useCallback(() => {
@@ -548,7 +529,6 @@ function App() {
     setActiveJob(null)
     setCompletedJob(null)
     setLastCompletedJob(null)
-    setProcessingToast(null)
     setProcessingRefreshError(null)
   }, [closeActiveSse])
 
@@ -613,11 +593,6 @@ function App() {
           </div>
         </main>
       </div>
-      <ProcessingToast
-        job={processingToast}
-        onOpenProject={handleOpenCompletedProject}
-        onDismiss={handleDismissCompletedState}
-      />
     </ContextMenuProvider>
   )
 }
