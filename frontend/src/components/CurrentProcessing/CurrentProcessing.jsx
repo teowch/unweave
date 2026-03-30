@@ -28,6 +28,7 @@ const CurrentProcessing = ({
   onOpenActive,
   onOpenFinished,
   onDismissFinished,
+  isLocked = false,
 }) => {
   const [panelState, setPanelState] = useState('compact')
   const job = activeJob || finishedJob
@@ -51,6 +52,10 @@ const CurrentProcessing = ({
   }
 
   const handleCardClick = () => {
+    if (isLocked) {
+      return
+    }
+
     if (isFinished) {
       onOpenFinished?.()
       return
@@ -110,6 +115,7 @@ const CurrentProcessing = ({
             onClick={handleShowCompact}
             aria-expanded={false}
             aria-label={isFinished ? 'Open finished processing panel' : 'Open current processing panel'}
+            disabled={isLocked}
           >
             <span className="current-processing__fab-ring" />
             <span className="current-processing__fab-core">
@@ -138,19 +144,19 @@ const CurrentProcessing = ({
 
           {isFinished ? (
             <div className="current-processing__actions">
-              <button type="button" className="current-processing__link" onClick={onOpenFinished}>
+              <button type="button" className="current-processing__link" onClick={onOpenFinished} disabled={isLocked}>
                 Open Project
               </button>
-              <button type="button" className="current-processing__dismiss" onClick={handleDismiss} aria-label="Dismiss finished status">
+              <button type="button" className="current-processing__dismiss" onClick={handleDismiss} aria-label="Dismiss finished status" disabled={isLocked}>
                 Dismiss
               </button>
             </div>
           ) : (
             <div className="current-processing__actions">
-              <button type="button" className="current-processing__toggle" onClick={handleShowDetails}>
+              <button type="button" className="current-processing__toggle" onClick={handleShowDetails} disabled={isLocked}>
                 More details
               </button>
-              <button type="button" className="current-processing__toggle" onClick={handleHideCompact}>
+              <button type="button" className="current-processing__toggle" onClick={handleHideCompact} disabled={isLocked}>
                 Hide
               </button>
             </div>
@@ -164,7 +170,7 @@ const CurrentProcessing = ({
           onClick={handleCardClick}
           onKeyDown={handleKeyDown}
           role="button"
-          tabIndex={0}
+          tabIndex={isLocked ? -1 : 0}
         >
           <div className="current-processing__header">
             <div className="current-processing__title-block">
@@ -176,16 +182,16 @@ const CurrentProcessing = ({
             <div className="current-processing__actions" onClick={(event) => event.stopPropagation()}>
               {isFinished ? (
                 <>
-                  <button type="button" className="current-processing__link" onClick={onOpenFinished}>
+                  <button type="button" className="current-processing__link" onClick={onOpenFinished} disabled={isLocked}>
                     Open Project
                   </button>
-                  <button type="button" className="current-processing__dismiss" onClick={handleDismiss} aria-label="Dismiss finished status">
+                  <button type="button" className="current-processing__dismiss" onClick={handleDismiss} aria-label="Dismiss finished status" disabled={isLocked}>
                     Dismiss
                   </button>
                 </>
               ) : null}
 
-              <button type="button" className="current-processing__toggle" onClick={handleCloseDetails}>
+              <button type="button" className="current-processing__toggle" onClick={handleCloseDetails} disabled={isLocked}>
                 Hide Details
               </button>
             </div>

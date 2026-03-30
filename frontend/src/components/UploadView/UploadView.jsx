@@ -13,6 +13,7 @@ const STEP_STATUS_MAP = {
 const UploadView = ({
     onUploadSuccess,
     activeJob,
+    isInteractionLocked,
     processingRefreshError,
     onProcessingStarted,
     onProcessingReset
@@ -101,6 +102,10 @@ const UploadView = ({
     };
 
     const handleUpload = async () => {
+        if (isInteractionLocked) {
+            return;
+        }
+
         setIsLoading(true);
         setError(null);
 
@@ -227,6 +232,7 @@ const UploadView = ({
                         <header>
                             <h2>Start New Project</h2>
                             <p className="subtitle">Upload an audio file or paste a YouTube link to split stems.</p>
+                            {isInteractionLocked ? <p className="subtitle">Resolve the interrupted recovery prompt before starting a new project.</p> : null}
                         </header>
 
                         <div className="input-area">
@@ -234,12 +240,14 @@ const UploadView = ({
                                 <button
                                     className={`switcher-btn ${mode === 'file' ? 'active' : ''}`}
                                     onClick={() => setMode('file')}
+                                    disabled={isInteractionLocked}
                                 >
                                     File Upload
                                 </button>
                                 <button
                                     className={`switcher-btn ${mode === 'url' ? 'active' : ''}`}
                                     onClick={() => setMode('url')}
+                                    disabled={isInteractionLocked}
                                 >
                                     YouTube URL
                                 </button>
@@ -257,6 +265,7 @@ const UploadView = ({
                                         type="file"
                                         accept=".mp3,.wav,.ogg,.flac"
                                         onChange={(event) => setFile(event.target.files[0])}
+                                        disabled={isInteractionLocked}
                                         id="file-input"
                                         className="hidden-input"
                                         key={file?.name || 'file-input'}
@@ -284,6 +293,7 @@ const UploadView = ({
                                         placeholder="Paste Youtube Link here..."
                                         value={url}
                                         onChange={(event) => setUrl(event.target.value)}
+                                        disabled={isInteractionLocked}
                                         className="styled-input"
                                     />
                                 </div>
@@ -312,7 +322,7 @@ const UploadView = ({
                     <div className="actions">
                         <button
                             onClick={handleUpload}
-                            disabled={(mode === 'file' && !file) || (mode === 'url' && !url) || isLoading}
+                            disabled={isInteractionLocked || (mode === 'file' && !file) || (mode === 'url' && !url) || isLoading}
                             className="btn btn-primary btn-large"
                         >
                             {isLoading ? (

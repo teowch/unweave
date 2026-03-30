@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom'
-import { acknowledgeProcessing, getActiveJob, getHistory, getProject, isElectron, unifyStems } from './services/api'
+import { acknowledgeProcessing, discardProcessing, getActiveJob, getHistory, getProject, isElectron, recoverProcessing, unifyStems } from './services/api'
 import { createSSEConnection } from './services/sse'
 import './App.css'
 
@@ -14,10 +14,12 @@ import SetupView from './components/SetupView/SetupView'
 import NotFound from './components/NotFound'
 import { ContextMenuProvider } from './components/ContextMenu/ContextMenuProvider'
 import CurrentProcessing from './components/CurrentProcessing/CurrentProcessing'
+import RecoveryPrompt from './components/RecoveryPrompt/RecoveryPrompt'
 
 const CONSISTENCY_RETRY_MS = 1500
 const ACTIVE_JOB_HYDRATION_ATTEMPTS = 6
 const ACTIVE_JOB_HYDRATION_DELAY_MS = 250
+const RECOVERY_STATES = new Set(['awaiting_recovery', 'recovering', 'interrupted'])
 
 const normalizeActiveJobSnapshot = (snapshot) => {
   if (!snapshot?.job) {
@@ -39,6 +41,10 @@ const normalizeActiveJobSnapshot = (snapshot) => {
     projectId: snapshot.job.project_id,
     projectName: snapshot.project?.name || snapshot.job.source_name || 'Untitled Project',
     state: snapshot.job.state,
+    canSafeResume: Boolean(snapshot.job.canSafeResume),
+    canRerunFromSource: Boolean(snapshot.job.canRerunFromSource),
+    recoveryMode: snapshot.job.recoveryMode || 'discard_only',
+    recoveryMessage: snapshot.job.recoveryMessage || null,
     completionAcknowledgedAt: snapshot.job.completion_acknowledged_at || null,
     steps,
     currentStep,
@@ -210,6 +216,10 @@ function App() {
   const [activeJob, setActiveJob] = useState(null)
   const [completedJob, setCompletedJob] = useState(null)
   const [lastCompletedJob, setLastCompletedJob] = useState(null)
+  const [recoveryJob, setRecoveryJob] = useState(null)
+  const [recoveryPendingAction, setRecoveryPendingAction] = useState(null)
+  const [recoveryError, setRecoveryError] = useState(null)
+  const [isConfirmingDiscard, setIsConfirmingDiscard] = useState(false)
   const [processingRefreshError, setProcessingRefreshError] = useState(null)
   const [setupRequired, setSetupRequired] = useState(() => {
     if (!isElectron || !window.electronAPI) return false
@@ -317,8 +327,21 @@ function App() {
           return normalized
         }
 
+        if (RECOVERY_STATES.has(normalized.state)) {
+          closeActiveSse()
+          activeJobRef.current = null
+          setActiveJob(null)
+          setCompletedJob(null)
+          setRecoveryJob(normalized)
+          setProcessingRefreshError(null)
+          return normalized
+        }
+
         activeJobRef.current = normalized
         setCompletedJob(null)
+        setRecoveryJob(null)
+        setRecoveryError(null)
+        setIsConfirmingDiscard(false)
         setActiveJob(normalized)
         setProcessingRefreshError(null)
         subscribeToActiveJob(normalized.projectId)
@@ -433,10 +456,14 @@ function App() {
   }, [completedJob, navigate, refreshLibrary])
 
   const hasGlobalProcessingState = Boolean(activeJob || lastCompletedJob)
+  const isRecoveryGateOpen = Boolean(recoveryJob)
 
   const handleOpenActiveProcessing = useCallback(() => {
+    if (isRecoveryGateOpen) {
+      return
+    }
     navigate('/split')
-  }, [navigate])
+  }, [isRecoveryGateOpen, navigate])
 
   const handleProcessingStarted = useCallback(async (startPayload = null) => {
     const snapshot = startPayload?.job ? startPayload : null
@@ -448,6 +475,9 @@ function App() {
     if (normalized) {
       setLastCompletedJob(null)
       setCompletedJob(null)
+      setRecoveryJob(null)
+      setRecoveryError(null)
+      setIsConfirmingDiscard(false)
       setProcessingRefreshError(null)
       activeJobRef.current = normalized
       setActiveJob(normalized)
@@ -458,6 +488,9 @@ function App() {
     if (typeof startPayload === 'string' && expectedProjectId) {
       setLastCompletedJob(null)
       setCompletedJob(null)
+      setRecoveryJob(null)
+      setRecoveryError(null)
+      setIsConfirmingDiscard(false)
       setProcessingRefreshError(null)
       subscribeToActiveJob(expectedProjectId)
       const hydrated = await hydrateActiveProcessing(null, { preserveSubscriptionOnEmpty: true })
@@ -473,6 +506,11 @@ function App() {
     if (hydrated) {
       setLastCompletedJob(null)
       setCompletedJob(null)
+      if (!RECOVERY_STATES.has(hydrated.state)) {
+        setRecoveryJob(null)
+      }
+      setRecoveryError(null)
+      setIsConfirmingDiscard(false)
       setProcessingRefreshError(null)
     }
     return hydrated
@@ -557,8 +595,71 @@ function App() {
     setActiveJob(null)
     setCompletedJob(null)
     setLastCompletedJob(null)
+    setRecoveryJob(null)
+    setRecoveryError(null)
+    setIsConfirmingDiscard(false)
     setProcessingRefreshError(null)
   }, [closeActiveSse])
+
+  const handleRecoverProcessing = useCallback(async (mode) => {
+    if (!recoveryJob?.jobId) {
+      return
+    }
+
+    setRecoveryPendingAction(mode)
+    setRecoveryError(null)
+
+    try {
+      await recoverProcessing(recoveryJob.jobId, mode)
+      const refreshed = await hydrateActiveProcessing(recoveryJob.projectId)
+
+      if (!refreshed || !RECOVERY_STATES.has(refreshed.state)) {
+        setRecoveryJob(null)
+        setRecoveryError(null)
+        setIsConfirmingDiscard(false)
+      }
+    } catch (error) {
+      console.error('Failed to recover processing', error)
+      setRecoveryError(
+        error?.userMessage
+        || error?.response?.data?.error
+        || 'Review the interrupted project details and choose rerun from source or discard the project.'
+      )
+    } finally {
+      setRecoveryPendingAction(null)
+    }
+  }, [hydrateActiveProcessing, recoveryJob])
+
+  const handleDiscardRecovery = useCallback(async () => {
+    if (!recoveryJob?.jobId) {
+      return
+    }
+
+    setRecoveryPendingAction('discard')
+    setRecoveryError(null)
+
+    try {
+      await discardProcessing(recoveryJob.jobId)
+      closeActiveSse()
+      activeJobRef.current = null
+      setRecoveryJob(null)
+      setActiveJob(null)
+      setCompletedJob(null)
+      setLastCompletedJob(null)
+      setIsConfirmingDiscard(false)
+      setProcessingRefreshError(null)
+      await refreshLibrary()
+    } catch (error) {
+      console.error('Failed to discard interrupted processing', error)
+      setRecoveryError(
+        error?.userMessage
+        || error?.response?.data?.error
+        || 'Discard could not be completed. Review the interrupted project details and try again.'
+      )
+    } finally {
+      setRecoveryPendingAction(null)
+    }
+  }, [closeActiveSse, recoveryJob, refreshLibrary])
 
   const handleUnify = async (trackId, selectedStems) => {
     if (!selectedStems || selectedStems.length === 0) return alert('Select stems to unify first.')
@@ -587,13 +688,18 @@ function App() {
     <ContextMenuProvider>
       <div className="app-container">
         <Sidebar />
-        <main className="main-content" data-processing-state={hasGlobalProcessingState ? 'active' : 'idle'}>
+        <main
+          className={`main-content ${isRecoveryGateOpen ? 'main-content--locked' : ''}`}
+          data-processing-state={hasGlobalProcessingState ? 'active' : 'idle'}
+          aria-hidden={isRecoveryGateOpen ? 'true' : 'false'}
+        >
           <CurrentProcessing
             activeJob={activeJob}
             finishedJob={lastCompletedJob}
             onOpenActive={handleOpenActiveProcessing}
             onOpenFinished={handleOpenCompletedProject}
             onDismissFinished={handleDismissCompletedState}
+            isLocked={isRecoveryGateOpen}
           />
           <div className="main-route-content">
             <Routes>
@@ -604,6 +710,7 @@ function App() {
                   <UploadView
                     onUploadSuccess={refreshLibrary}
                     activeJob={activeJob}
+                    isInteractionLocked={isRecoveryGateOpen}
                     processingRefreshError={processingRefreshError}
                     onProcessingStarted={handleProcessingStarted}
                     onProcessingFinished={hydrateActiveProcessing}
@@ -620,6 +727,16 @@ function App() {
             </Routes>
           </div>
         </main>
+        <RecoveryPrompt
+          recoveryJob={recoveryJob}
+          pendingAction={recoveryPendingAction}
+          errorMessage={recoveryError}
+          confirmingDiscard={isConfirmingDiscard}
+          onRecover={handleRecoverProcessing}
+          onDiscard={handleDiscardRecovery}
+          onStartDiscard={() => setIsConfirmingDiscard(true)}
+          onCancelDiscard={() => setIsConfirmingDiscard(false)}
+        />
       </div>
     </ContextMenuProvider>
   )

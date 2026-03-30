@@ -58,11 +58,26 @@ body {
   position: relative;
 }
 
+.main-content--locked {
+  filter: saturate(0.72) brightness(0.7);
+}
+
+.main-content--locked,
+.main-content--locked * {
+  user-select: none;
+}
+
 .main-route-content {
   flex: 1;
   display: flex;
   flex-direction: column;
   min-height: 0;
+  pointer-events: auto;
+}
+
+.main-content--locked .main-route-content,
+.main-content--locked .current-processing {
+  pointer-events: none;
 }
 
 /* Scrollbar Styling */
