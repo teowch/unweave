@@ -91,7 +91,7 @@ const CurrentProcessing = ({
     }
   }
 
-  const effectivePanelState = isFinished && panelState === 'minimized'
+  const effectivePanelState = isFinished
     ? 'compact'
     : panelState
   const showCompactPanel = effectivePanelState === 'compact'

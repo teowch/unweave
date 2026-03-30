@@ -413,7 +413,6 @@ function App() {
 
     const completionTimeout = window.setTimeout(() => {
       refreshLibrary()
-      setLastCompletedJob(completedJob)
 
       if (
         completedJob.completedFromPath === '/split'
@@ -424,6 +423,7 @@ function App() {
         return
       }
 
+      setLastCompletedJob(completedJob)
       setCompletedJob(null)
     }, 0)
 
@@ -522,6 +522,34 @@ function App() {
 
     setLastCompletedJob(null)
   }, [acknowledgeFinishedJob, lastCompletedJob])
+
+  useEffect(() => {
+    if (!lastCompletedJob?.projectId) {
+      return undefined
+    }
+
+    const projectPath = `/library/${lastCompletedJob.projectId}`
+    if (location.pathname !== projectPath) {
+      return undefined
+    }
+
+    let cancelled = false
+
+    const acknowledgeOnProjectPage = async () => {
+      const acknowledged = await acknowledgeFinishedJob(lastCompletedJob)
+      if (!acknowledged || cancelled) {
+        return
+      }
+
+      setLastCompletedJob(null)
+    }
+
+    acknowledgeOnProjectPage()
+
+    return () => {
+      cancelled = true
+    }
+  }, [acknowledgeFinishedJob, lastCompletedJob, location.pathname])
 
   const handleProcessingReset = useCallback(() => {
     closeActiveSse()
