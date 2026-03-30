@@ -209,12 +209,27 @@ class ProjectService:
             return None
         return self.processing_job_repository.get_first_non_completed_batch(job_id)
 
+    def get_resumable_batches(self, job_id: str) -> List[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return []
+        return self.processing_job_repository.get_resumable_batches(job_id)
+
+    def get_first_resumable_batch(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_first_resumable_batch(job_id)
+
+    def list_processing_jobs_for_project(self, project_id: str) -> List[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return []
+        return self.processing_job_repository.list_jobs_for_project(project_id)
+
     def get_recovery_resume_plan(self, job_id: str) -> Optional[Dict[str, Any]]:
         snapshot = self.get_processing_job_snapshot(job_id)
         if not snapshot:
             return None
 
-        resume_from = self.get_first_non_completed_batch(job_id)
+        resume_from = self.get_first_resumable_batch(job_id)
         preserved_batches = [
             batch for batch in snapshot["batches"] if batch["state"] == "completed"
         ]
@@ -222,11 +237,7 @@ class ProjectService:
         fallback = None
 
         if resume_from and self._is_safe_recovery_batch(snapshot, resume_from):
-            remaining_batches = [
-                batch
-                for batch in snapshot["batches"]
-                if batch["batch_order"] >= resume_from["batch_order"]
-            ]
+            remaining_batches = self.get_resumable_batches(job_id)
         else:
             resume_from = None
             fallback = self._build_recovery_fallback(snapshot["job"])
@@ -608,7 +619,7 @@ class ProjectService:
             raise e
 
     def _is_safe_recovery_batch(self, snapshot: Dict[str, Any], batch: Dict[str, Any]) -> bool:
-        allowed_states = {"interrupted", "failed", "running"}
+        allowed_states = {"interrupted", "running"}
         if batch["state"] not in allowed_states:
             return False
 

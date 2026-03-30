@@ -312,6 +312,12 @@ class ProcessingJobRepository:
             snapshot = self.get_job_snapshot(job_id)
         return snapshot
 
+    def get_recoverable_job(self):
+        snapshot = self.get_recoverable_job_snapshot()
+        if not snapshot:
+            return None
+        return snapshot["job"]
+
     def get_first_non_completed_batch(self, job_id):
         snapshot = self.get_job_snapshot(job_id)
         if not snapshot:
@@ -322,6 +328,27 @@ class ProcessingJobRepository:
                 return batch
 
         return None
+
+    def get_resumable_batches(self, job_id):
+        snapshot = self.get_job_snapshot(job_id)
+        if not snapshot:
+            return []
+
+        first_non_completed = self.get_first_non_completed_batch(job_id)
+        if not first_non_completed:
+            return []
+
+        return [
+            batch
+            for batch in snapshot["batches"]
+            if batch["batch_order"] >= first_non_completed["batch_order"]
+        ]
+
+    def get_first_resumable_batch(self, job_id):
+        resumable_batches = self.get_resumable_batches(job_id)
+        if not resumable_batches:
+            return None
+        return resumable_batches[0]
 
     def list_batches_for_job(self, job_id):
         snapshot = self.get_job_snapshot(job_id)
