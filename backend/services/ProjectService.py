@@ -3,6 +3,7 @@ import json
 import shutil
 import threading
 from pathlib import Path
+from datetime import datetime
 from typing import List, Dict, Optional, Any
 
 from persistence.project_catalog import build_history_entry, build_project_snapshot
@@ -14,10 +15,12 @@ class ProjectService:
         self,
         library_folder: str,
         project_repository=None,
+        processing_job_repository=None,
         legacy_importer=None,
     ):
         self.library_folder = library_folder
         self.project_repository = project_repository
+        self.processing_job_repository = processing_job_repository
         self.legacy_importer = legacy_importer
         self.track_sessions: Dict[str, Dict[str, Any]] = {}
         self.session_history: List[Dict[str, Any]] = []
@@ -154,6 +157,215 @@ class ProjectService:
 
         self.project_repository.replace_project_snapshot(project_row, file_rows)
         self._sync_sqlite_cache(project_row["id"])
+
+    def get_active_processing_job_snapshot(self) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        recoverable_snapshot = self.processing_job_repository.get_recoverable_job_snapshot()
+        if recoverable_snapshot:
+            return self._attach_recovery_decision(recoverable_snapshot)
+
+        snapshot = self.processing_job_repository.get_active_processing_job()
+        if snapshot:
+            return self._attach_recovery_decision(snapshot)
+
+        return None
+
+    def create_processing_job(self, job_row: Dict[str, Any]) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.create_job(job_row)
+
+    def replace_processing_batches(self, job_id: str, batch_rows: List[Dict[str, Any]]) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.replace_batches(job_id, batch_rows)
+
+    def update_processing_job_state(self, job_id: str, state: str, **fields: Any) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.update_job_state(job_id, state, **fields)
+
+    def update_processing_batch_state(self, job_id: str, batch_order: int, state: str, **fields: Any) -> None:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        self.processing_job_repository.update_batch_state(job_id, batch_order, state, **fields)
+
+    def get_processing_job_snapshot(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_job_snapshot(job_id)
+
+    def get_recoverable_processing_job_snapshot(self) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        snapshot = self.processing_job_repository.get_recoverable_job_snapshot()
+        if snapshot:
+            return self._attach_recovery_decision(snapshot)
+        return None
+
+    def get_first_non_completed_batch(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_first_non_completed_batch(job_id)
+
+    def get_resumable_batches(self, job_id: str) -> List[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return []
+        return self.processing_job_repository.get_resumable_batches(job_id)
+
+    def get_first_resumable_batch(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_first_resumable_batch(job_id)
+
+    def list_processing_jobs_for_project(self, project_id: str) -> List[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return []
+        return self.processing_job_repository.list_jobs_for_project(project_id)
+
+    def get_recovery_resume_plan(self, job_id: str) -> Optional[Dict[str, Any]]:
+        snapshot = self.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            return None
+
+        resume_from = self.get_first_resumable_batch(job_id)
+        preserved_batches = [
+            batch for batch in snapshot["batches"] if batch["state"] == "completed"
+        ]
+        remaining_batches = []
+        fallback = None
+
+        if resume_from and self._is_safe_recovery_batch(snapshot, resume_from):
+            remaining_batches = self.get_resumable_batches(job_id)
+        else:
+            resume_from = None
+            fallback = self._build_recovery_fallback(snapshot["job"])
+
+        return {
+            "job": snapshot["job"],
+            "project": snapshot["project"],
+            "preserved_batches": preserved_batches,
+            "resume_from": resume_from,
+            "remaining_batches": remaining_batches,
+            "fallback": fallback,
+        }
+
+    def acknowledge_processing_completion(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            raise RuntimeError("Processing job repository is not configured")
+        return self.processing_job_repository.acknowledge_job_completion(
+            job_id,
+            datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+        )
+
+    def cleanup_interrupted_batch_artifacts(self, job_id: str) -> bool:
+        resume_plan = self.get_recovery_resume_plan(job_id)
+        if not resume_plan or not resume_plan["resume_from"]:
+            return False
+
+        project_path = self.get_project_path(resume_plan["job"]["project_id"])
+        if not project_path:
+            return False
+
+        removed_any = False
+        for relative_path in resume_plan["resume_from"].get("output_paths", []):
+            absolute_path = Path(project_path) / relative_path
+            if absolute_path.exists():
+                absolute_path.unlink()
+                removed_any = True
+
+            waveform_path = self._waveform_path_for_relative(project_path, relative_path)
+            if waveform_path and waveform_path.exists():
+                waveform_path.unlink()
+                removed_any = True
+
+        return removed_any
+
+    def discard_recoverable_job(self, job_id: str) -> bool:
+        snapshot = self.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            return False
+
+        return self.discard_project(snapshot["job"]["project_id"])
+
+    def discard_project(self, project_id: str) -> bool:
+        if not self.project_repository:
+            return self.delete_project(project_id)
+
+        if self.processing_job_repository:
+            with self.processing_job_repository.database.transaction() as connection:
+                connection.execute(
+                    "DELETE FROM project_files WHERE project_id = ?",
+                    (project_id,),
+                )
+                connection.execute(
+                    "DELETE FROM projects WHERE id = ?",
+                    (project_id,),
+                )
+            self.processing_job_repository.delete_jobs_for_project(project_id)
+        else:
+            with self.project_repository.database.transaction() as connection:
+                connection.execute(
+                    "DELETE FROM project_files WHERE project_id = ?",
+                    (project_id,),
+                )
+                connection.execute(
+                    "DELETE FROM projects WHERE id = ?",
+                    (project_id,),
+                )
+
+        self.track_sessions.pop(project_id, None)
+        self.session_history[:] = [t for t in self.session_history if t["id"] != project_id]
+        return self._delete_project_folder(project_id)
+
+    def get_recovery_decision(self, job_id: str) -> Optional[Dict[str, Any]]:
+        snapshot = self.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            return None
+
+        if snapshot["job"]["state"] == "interrupted":
+            self.update_processing_job_state(job_id, "awaiting_recovery")
+            snapshot = self.get_processing_job_snapshot(job_id)
+
+        resume_plan = self.get_recovery_resume_plan(job_id)
+        if not resume_plan:
+            return None
+
+        fallback = resume_plan.get("fallback")
+        recovering_mode = self._detect_recovering_mode(snapshot)
+        source_available = bool(snapshot["job"].get("source_type") and snapshot["job"].get("source_name"))
+        can_safe_resume = recovering_mode == "safe_resume" or resume_plan["resume_from"] is not None
+        can_rerun_from_source = source_available or recovering_mode == "rerun_from_source" or bool(
+            fallback and fallback.get("type") == "full_rerun"
+        )
+
+        if recovering_mode:
+            recovery_mode = recovering_mode
+            recovery_message = None
+        elif can_safe_resume:
+            recovery_mode = "safe_resume"
+            recovery_message = None
+        elif can_rerun_from_source:
+            recovery_mode = "rerun_from_source"
+            if fallback["source_type"] == "url":
+                recovery_message = "Safe resume is unavailable. Recover by rerunning from the persisted URL."
+            else:
+                recovery_message = "Safe resume is unavailable. Recover by rerunning from the original uploaded file."
+        else:
+            recovery_mode = "discard_only"
+            recovery_message = "Safe resume is unavailable and no original source remains. Discard is required."
+
+        return {
+            "jobId": snapshot["job"]["id"],
+            "projectId": snapshot["job"]["project_id"],
+            "projectName": snapshot["project"]["name"],
+            "state": snapshot["job"]["state"],
+            "canSafeResume": can_safe_resume,
+            "canRerunFromSource": can_rerun_from_source,
+            "recoveryMode": recovery_mode,
+            "recoveryMessage": recovery_message,
+        }
 
     def _sync_sqlite_cache(self, project_id: str) -> None:
         snapshot = self.get_sqlite_project_snapshot(project_id)
@@ -379,10 +591,15 @@ class ProjectService:
             self.session_history.insert(0, track_data)
 
     def delete_project(self, project_id: str) -> bool:
-        if project_id not in self.track_sessions:
-            return False
+        if self.project_repository:
+            return self.discard_project(project_id)
 
-        directory = self.track_sessions[project_id]['path']
+        return self._delete_project_folder(project_id)
+
+    def _delete_project_folder(self, project_id: str) -> bool:
+        directory = self.get_project_path(project_id)
+        if not directory:
+            return False
 
         try:
             resolved_directory = os.path.realpath(directory)
@@ -394,9 +611,64 @@ class ProjectService:
 
         try:
             shutil.rmtree(directory)
-            del self.track_sessions[project_id]
+            self.track_sessions.pop(project_id, None)
             self.session_history[:] = [t for t in self.session_history if t['id'] != project_id]
             return True
         except Exception as e:
             print(f"Error deleting project {project_id}: {e}")
             raise e
+
+    def _is_safe_recovery_batch(self, snapshot: Dict[str, Any], batch: Dict[str, Any]) -> bool:
+        allowed_states = {"interrupted", "running"}
+        if batch["state"] not in allowed_states:
+            return False
+
+        for previous_batch in snapshot["batches"]:
+            if previous_batch["batch_order"] >= batch["batch_order"]:
+                break
+            if previous_batch["state"] != "completed":
+                return False
+
+        return bool(batch.get("output_paths"))
+
+    def _build_recovery_fallback(self, job_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        source_name = job_row.get("source_name")
+        source_type = job_row.get("source_type")
+        if not source_name or not source_type:
+            return None
+
+        return {
+            "type": "full_rerun",
+            "source_type": source_type,
+            "source_name": source_name,
+        }
+
+    def _waveform_path_for_relative(self, project_path: str, relative_path: str) -> Optional[Path]:
+        relative = Path(relative_path)
+        if relative.suffix.lower() not in {".wav", ".mp3", ".flac"}:
+            return None
+
+        if relative.parts and relative.parts[0] == "waveforms":
+            return Path(project_path) / relative
+
+        return Path(project_path) / "waveforms" / f"{relative.stem}.json"
+
+    def _attach_recovery_decision(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        job_state = snapshot["job"]["state"]
+        if job_state in {"interrupted", "awaiting_recovery", "recovering"}:
+            enriched_snapshot = dict(snapshot)
+            enriched_snapshot["recovery"] = self.get_recovery_decision(snapshot["job"]["id"])
+            return enriched_snapshot
+        return snapshot
+
+    def _detect_recovering_mode(self, snapshot: Dict[str, Any]) -> Optional[str]:
+        if snapshot["job"]["state"] != "recovering":
+            return None
+
+        if any(batch["state"] == "rerunning" for batch in snapshot["batches"]):
+            return "safe_resume"
+
+        if snapshot["batches"] and all(batch["state"] == "pending" for batch in snapshot["batches"]):
+            return "rerun_from_source"
+
+        return None

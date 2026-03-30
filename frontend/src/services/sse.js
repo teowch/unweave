@@ -4,20 +4,17 @@ import { SSE_BASE } from './api';
  * SSE Service for receiving real-time processing status updates
  * 
  * Events emitted by the backend:
- * - 'download': Download progress { module, status: 'running', message: '<percentage>' }
- * - 'module_processing': Module processing { module, status: 'running'|'resolving_dependency', message: '<percentage>|<module_name>' }
- * - 'model_downloading': Model download progress { module, model, status: 'downloading'|'complete', progress: '<percentage>|<message>' }
+ * - 'processing_updated': Processing snapshot invalidation { job_id, project_id, state }
  * - 'id_changed': Project ID changed { new_id: '<new_project_id>' }
  * - 'error': Error occurred { module, status: 'error', message: '<error_message>' }
  * - 'done': Stream completed { message: 'closed' }
  */
 
 /**
- * Creates an SSE connection for a specific job/project
- * @param {string} jobId - The job/project ID to subscribe to
+ * Creates an SSE connection for a specific project channel
+ * @param {string} projectId - The project ID to subscribe to
  * @param {Object} handlers - Event handler callbacks
- * @param {Function} handlers.onDownloadProgress - Called with { module, status, message } for download updates
- * @param {Function} handlers.onModuleProgress - Called with { module, status, message } for module processing updates
+ * @param {Function} handlers.onProcessingUpdated - Called with invalidation payload when snapshot should refetch
  * @param {Function} handlers.onIdChanged - Called with { new_id } when project ID changes
  * @param {Function} handlers.onError - Called with { module, status, message } on error
  * @param {Function} handlers.onDone - Called when stream is complete
@@ -27,8 +24,8 @@ import { SSE_BASE } from './api';
  * @param {Function} handlers.onConnectionError - Called when SSE connection fails
  * @returns {Object} Controller with { close, reconnect }
  */
-export function createSSEConnection(jobId, handlers = {}) {
-    let currentJobId = jobId;
+export function createSSEConnection(projectId, handlers = {}) {
+    let currentJobId = projectId;
     let eventSource = null;
     let retryCount = 0;
     const MAX_RETRIES = 10;
@@ -37,9 +34,7 @@ export function createSSEConnection(jobId, handlers = {}) {
     let closed = false;
 
     const {
-        onDownloadProgress,
-        onModuleProgress,
-        onModelDownloading,
+        onProcessingUpdated,
         onIdChanged,
         onError,
         onDone,
@@ -75,14 +70,7 @@ export function createSSEConnection(jobId, handlers = {}) {
         eventSource = new EventSource(sseUrl);
         currentJobId = id;
 
-        // Handle download progress events
-        handleJsonEvent('download', onDownloadProgress);
-
-        // Handle module processing events
-        handleJsonEvent('module_processing', onModuleProgress);
-
-        // Handle model downloading events
-        handleJsonEvent('model_downloading', onModelDownloading);
+        handleJsonEvent('processing_updated', onProcessingUpdated);
 
         // Handle project ID change events - reconnect to new ID
         eventSource.addEventListener('id_changed', (event) => {
@@ -158,7 +146,7 @@ export function createSSEConnection(jobId, handlers = {}) {
     }
 
     // Initial connection
-    connect(jobId);
+    connect(projectId);
 
     return {
         /** Close the SSE connection */

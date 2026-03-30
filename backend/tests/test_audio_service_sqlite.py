@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 
 from persistence import Database
+from persistence.processing_job_repository import ProcessingJobRepository
 from persistence.project_repository import ProjectRepository
 from services.AudioService import AudioService
 from services.FileService import FileService
@@ -41,8 +42,14 @@ class FakeProcessor:
 
 
 def _build_services(library_root, tmp_path):
-    repository = ProjectRepository(Database(str(library_root)))
-    project_service = ProjectService(str(library_root), project_repository=repository)
+    database = Database(str(library_root))
+    repository = ProjectRepository(database)
+    processing_job_repository = ProcessingJobRepository(database)
+    project_service = ProjectService(
+        str(library_root),
+        project_repository=repository,
+        processing_job_repository=processing_job_repository,
+    )
     file_service = FileService(project_service, str(tmp_path / "uploads"))
     audio_service = AudioService(project_service, file_service)
     audio_service.processor = FakeProcessor()
@@ -80,6 +87,28 @@ def test_process_separation_persists_sqlite_snapshot_without_metadata_json(libra
     assert history[0]["original"] == "song.wav"
     assert not (project_dir / "metadata.json").exists()
 
+    active_job = project_service.get_active_processing_job_snapshot()
+
+    assert active_job["job"]["state"] == "completed"
+    assert active_job["job"]["completion_acknowledged_at"] is None
+
+    job_rows = project_service.processing_job_repository.database.connect().execute(
+        "SELECT id FROM processing_jobs ORDER BY created_at DESC"
+    ).fetchall()
+    job_snapshot = project_service.get_processing_job_snapshot(job_rows[0]["id"])
+
+    assert job_snapshot["job"]["state"] == "completed"
+    assert [batch["module_id"] for batch in job_snapshot["batches"]] == ["vocal_instrumental"]
+    assert job_snapshot["batches"][0]["input_relative_path"] == "song.wav"
+    assert job_snapshot["batches"][0]["output_paths"] == [
+        "base_instrumental.instrumental.flac",
+        "base_vocals.vocal.flac",
+    ]
+    assert job_snapshot["batches"][0]["requested_directly"] == 1
+    assert job_snapshot["batches"][0]["cleanup_required"] == 0
+    assert job_snapshot["batches"][0]["started_at"] is not None
+    assert job_snapshot["batches"][0]["finished_at"] is not None
+
 
 def test_process_separation_updates_existing_project_and_history(library_root, tmp_path, monkeypatch):
     monkeypatch.setattr("services.AudioService.precompute_waveforms_for_outputs", lambda outputs, output_dir: {})
@@ -110,6 +139,23 @@ def test_process_separation_updates_existing_project_and_history(library_root, t
     assert "lead_vocals.vocal.flac" in result["stems"]
     assert status["executed_modules"] == ["lead_backing", "vocal_instrumental"]
     assert project_service.get_sqlite_history()[0]["stems"] == sorted(result["stems"])
+
+    job_rows = project_service.processing_job_repository.database.connect().execute(
+        "SELECT id FROM processing_jobs ORDER BY created_at ASC"
+    ).fetchall()
+
+    assert len(job_rows) == 2
+
+    second_job = project_service.get_processing_job_snapshot(job_rows[1]["id"])
+
+    assert second_job["job"]["state"] == "completed"
+    assert [batch["module_id"] for batch in second_job["batches"]] == ["lead_backing"]
+    assert second_job["batches"][0]["input_relative_path"] == "base_vocals.vocal.flac"
+    assert second_job["batches"][0]["output_paths"] == [
+        "backing_vocals.vocal.flac",
+        "lead_vocals.vocal.flac",
+    ]
+    assert second_job["batches"][0]["requested_directly"] == 1
 
 
 def test_unify_tracks_refreshes_sqlite_snapshot(library_root, tmp_path, monkeypatch):

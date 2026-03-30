@@ -24,7 +24,17 @@ class AudioService:
         self.file_service = file_service
         self.processor = AudioProcessor()
 
-    def process_separation(self, project_id: str, filename: str, modules_to_run: List[str], sse_message_handler, thumbnail: Optional[str] = None, display_name: Optional[str] = None) -> Dict[str, Any]:
+    def process_separation(
+        self,
+        project_id: str,
+        filename: str,
+        modules_to_run: List[str],
+        sse_message_handler,
+        thumbnail: Optional[str] = None,
+        display_name: Optional[str] = None,
+        source_type: str = "local_file",
+        job_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         """
         Runs the separation process for a project.
         """
@@ -40,6 +50,7 @@ class AudioService:
         executed_modules = set(self.project_service.get_sqlite_project_status(project_id)["executed_modules"])
 
         modules_in_order = []
+        requested_modules = set(modules_to_run)
         for module_name in modules_to_run:
             if module_name not in MODULE_REGISTRY:
                 logger.warning(f"Unknown module requested: {module_name}")
@@ -49,22 +60,140 @@ class AudioService:
                 if dependency not in executed_modules and dependency not in modules_in_order:
                     modules_in_order.append(dependency)
 
-        for module_name in modules_in_order:
-            config = get_module(module_name)
-            input_path = self._resolve_input_path(project_id, filename, module_name)
+        if modules_in_order:
+            if job_id is None:
+                job_id = self._build_job_id(project_id)
+                self.project_service.create_processing_job(
+                    {
+                        "id": job_id,
+                        "project_id": project_id,
+                        "state": "running",
+                        "source_type": source_type,
+                        "source_name": filename,
+                        "requested_by": "user",
+                        "download_state": "completed" if source_type == "url" else "pending",
+                        "download_progress": 100 if source_type == "url" else 0,
+                        "started_at": self._timestamp(),
+                    }
+                )
+                self._publish_processing_updated(
+                    sse_message_handler,
+                    job_id,
+                    project_id,
+                    "running",
+                )
 
-            sse_message_handler.set_module(module_name)
-            sse_message_handler.set_current_model(config["model"])
-
-            outputs = self.processor.execute_module(
-                module_name=module_name,
-                input_path=input_path,
-                output_dir=output_folder,
-                interceptor_callback=getattr(sse_message_handler, "interceptor_callback", None),
+            self.project_service.replace_processing_batches(
+                job_id,
+                [
+                    {
+                        "job_id": job_id,
+                        "module_id": module_name,
+                        "state": "pending",
+                        "progress": 0,
+                        "batch_order": index,
+                        "input_relative_path": self._resolve_input_relative_path(project_id, filename, module_name),
+                        "output_paths": [],
+                        "started_at": None,
+                        "finished_at": None,
+                        "error_message": None,
+                        "cleanup_required": False,
+                        "requested_directly": module_name in requested_modules,
+                    }
+                    for index, module_name in enumerate(modules_in_order, start=1)
+                ],
             )
-            precompute_waveforms_for_outputs(outputs, output_folder)
-            self._refresh_project_snapshot(project_id, filename, display_name=display_name, thumbnail=thumbnail)
-            executed_modules = set(self.project_service.get_sqlite_project_status(project_id)["executed_modules"])
+            self._publish_processing_updated(
+                sse_message_handler,
+                job_id,
+                project_id,
+                "running",
+            )
+
+            try:
+                for batch_order, module_name in enumerate(modules_in_order, start=1):
+                    config = get_module(module_name)
+                    input_path = self._resolve_input_path(project_id, filename, module_name)
+
+                    self.project_service.update_processing_batch_state(
+                        job_id,
+                        batch_order,
+                        "running",
+                        progress=0,
+                        started_at=self._timestamp(),
+                        cleanup_required=False,
+                    )
+                    self._publish_processing_updated(
+                        sse_message_handler,
+                        job_id,
+                        project_id,
+                        "running",
+                    )
+                    sse_message_handler.set_module(module_name)
+                    sse_message_handler.set_current_model(config["model"])
+
+                    outputs = self.processor.execute_module(
+                        module_name=module_name,
+                        input_path=input_path,
+                        output_dir=output_folder,
+                        interceptor_callback=self._build_batch_progress_callback(
+                            job_id,
+                            batch_order,
+                            sse_message_handler,
+                            getattr(sse_message_handler, "interceptor_callback", None),
+                        ),
+                    )
+                    precompute_waveforms_for_outputs(outputs, output_folder)
+                    self._refresh_project_snapshot(project_id, filename, display_name=display_name, thumbnail=thumbnail)
+                    executed_modules = set(self.project_service.get_sqlite_project_status(project_id)["executed_modules"])
+                    self.project_service.update_processing_batch_state(
+                        job_id,
+                        batch_order,
+                        "completed",
+                        progress=100,
+                        finished_at=self._timestamp(),
+                        output_paths=self._to_relative_output_paths(output_folder, outputs),
+                        cleanup_required=False,
+                    )
+                    self._publish_processing_updated(
+                        sse_message_handler,
+                        job_id,
+                        project_id,
+                        "running",
+                    )
+
+                self.project_service.update_processing_job_state(
+                    job_id,
+                    "completed",
+                    finished_at=self._timestamp(),
+                )
+                self._publish_processing_updated(
+                    sse_message_handler,
+                    job_id,
+                    project_id,
+                    "completed",
+                )
+            except Exception as exc:
+                self.project_service.update_processing_batch_state(
+                    job_id,
+                    batch_order,
+                    "failed",
+                    finished_at=self._timestamp(),
+                    error_message=str(exc),
+                    cleanup_required=True,
+                )
+                self.project_service.update_processing_job_state(
+                    job_id,
+                    "failed",
+                    finished_at=self._timestamp(),
+                )
+                self._publish_processing_updated(
+                    sse_message_handler,
+                    job_id,
+                    project_id,
+                    "failed",
+                )
+                raise
 
         snapshot = self.project_service.get_sqlite_project_snapshot(project_id)
 
@@ -75,6 +204,62 @@ class AudioService:
             'executed_modules': snapshot['status']['executed_modules'],
             'thumbnail': snapshot['project'].get('thumbnail')
         }
+
+    def _build_batch_progress_callback(self, job_id: str, batch_order: int, sse_message_handler, callback):
+        def wrapped(message: str, event_type: str = "processing"):
+            if event_type == "processing" and "%" in message:
+                try:
+                    percentage = message.split("%")[0].strip().split()[-1]
+                    self.project_service.update_processing_batch_state(
+                        job_id,
+                        batch_order,
+                        "running",
+                        progress=int(float(percentage)),
+                    )
+                    snapshot = self.project_service.get_processing_job_snapshot(job_id)
+                    if snapshot:
+                        self._publish_processing_updated(
+                            sse_message_handler,
+                            job_id,
+                            snapshot["job"]["project_id"],
+                            "running",
+                        )
+                except (ValueError, TypeError):
+                    logger.debug("Unable to parse processing percentage from %s", message)
+
+            if callback is not None:
+                return callback(message, event_type)
+            return None
+
+        return wrapped
+
+    def update_processing_download_state(self, job_id: str, state: str, progress: int, sse_message_handler=None):
+        self.project_service.update_processing_job_state(
+            job_id,
+            "running",
+            download_state=state,
+            download_progress=progress,
+        )
+        snapshot = self.project_service.get_processing_job_snapshot(job_id)
+        if snapshot:
+            self._publish_processing_updated(
+                sse_message_handler,
+                job_id,
+                snapshot["job"]["project_id"],
+                snapshot["job"]["state"],
+            )
+
+    def _build_job_id(self, project_id: str) -> str:
+        return f"{project_id}:{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}"
+
+    def _timestamp(self) -> str:
+        return datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    def _to_relative_output_paths(self, output_folder: str, outputs: Dict[str, str]) -> List[str]:
+        relative_paths = []
+        for output_path in outputs.values():
+            relative_paths.append(Path(output_path).relative_to(output_folder).as_posix())
+        return sorted(relative_paths)
 
     def _resolve_input_path(self, project_id: str, original_filename: str, module_name: str) -> str:
         config = get_module(module_name)
@@ -100,6 +285,23 @@ class AudioService:
         raise FileNotFoundError(
             f"Dependency output '{expected_filename}' for module '{module_name}' was not found"
         )
+
+    def _resolve_input_relative_path(self, project_id: str, original_filename: str, module_name: str) -> str:
+        config = get_module(module_name)
+        if not config.get("depends_on"):
+            return original_filename
+
+        parent_module = config["depends_on"]
+        input_stem = config.get("input_stem")
+        if not input_stem:
+            raise ValueError(f"Module '{module_name}' requires an input stem")
+
+        parent_output_name = MODULE_REGISTRY[parent_module]["custom_output_names"][input_stem]
+        expected_filename = f"{parent_output_name}.{self.processor.output_format}"
+        resolved = self.project_service.resolve_sqlite_file(project_id, expected_filename)
+        if resolved:
+            return resolved["relative_path"]
+        return expected_filename
 
     def _refresh_project_snapshot(self, project_id: str, original_filename: str, display_name: Optional[str] = None, thumbnail: Optional[str] = None):
         existing_project = self.project_service.get_sqlite_project(project_id) or {}
@@ -145,7 +347,8 @@ class AudioService:
             return "waveform"
         return "other"
 
-    def download_url(self, url, sse_message_handler):
+    def download_url(self, url, sse_message_handler, job_id: Optional[str] = None):
+        progress_hook = self._build_download_progress_callback(job_id, sse_message_handler)
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': os.path.join('uploads', '%(title)s.%(ext)s'),
@@ -157,7 +360,7 @@ class AudioService:
             'noprogress': True,
             'no_color': True,
             'noplaylist': True,
-            'progress_hooks': [sse_message_handler.download_callback],
+            'progress_hooks': [progress_hook],
             'writethumbnail': True,
         }
 
@@ -184,6 +387,109 @@ class AudioService:
             raise Exception("Download failed")
 
         return downloaded_filepath, filename, thumbnail, title
+
+    def _build_download_progress_callback(self, job_id: Optional[str], sse_message_handler):
+        def callback(message: dict):
+            if message.get('status') != 'downloading' or job_id is None:
+                return None
+
+            raw_percent = message.get('_percent_str') or "0"
+            try:
+                progress = int(float(raw_percent.replace('%', '').strip()))
+            except ValueError:
+                progress = 0
+
+            self.update_processing_download_state(
+                job_id,
+                "running",
+                progress,
+                sse_message_handler=sse_message_handler,
+            )
+            return None
+
+        return callback
+
+    def _publish_processing_updated(self, sse_message_handler, job_id: str, project_id: str, state: str):
+        if sse_message_handler and hasattr(sse_message_handler, "publish_processing_updated"):
+            sse_message_handler.publish_processing_updated(job_id, project_id, state)
+
+    def recover_processing_job(self, job_id: str, recovery_mode: str, sse_message_handler=None) -> Dict[str, Any]:
+        decision = self.project_service.get_recovery_decision(job_id)
+        if not decision:
+            raise FileNotFoundError("Processing job not found")
+
+        if recovery_mode not in {"safe_resume", "rerun_from_source"}:
+            raise ValueError("Unsupported recoveryMode")
+
+        if recovery_mode == "safe_resume":
+            if not decision["canSafeResume"]:
+                raise ValueError(decision["recoveryMessage"] or "Safe resume is unavailable")
+            snapshot = self._recover_by_safe_resume(job_id)
+        else:
+            if not decision["canRerunFromSource"]:
+                raise ValueError(decision["recoveryMessage"] or "Rerun from source is unavailable")
+            snapshot = self._recover_by_rerun_from_source(job_id)
+
+        self._publish_processing_updated(
+            sse_message_handler,
+            snapshot["job"]["id"],
+            snapshot["job"]["project_id"],
+            snapshot["job"]["state"],
+        )
+        return self.project_service.get_active_processing_job_snapshot() or snapshot
+
+    def _recover_by_safe_resume(self, job_id: str) -> Dict[str, Any]:
+        resume_plan = self.project_service.get_recovery_resume_plan(job_id)
+        if not resume_plan or not resume_plan["resume_from"]:
+            raise ValueError("Safe resume is unavailable")
+
+        self.project_service.cleanup_interrupted_batch_artifacts(job_id)
+        self.project_service.processing_job_repository.mark_job_recovering(job_id)
+
+        resume_batch = resume_plan["resume_from"]
+        self.project_service.processing_job_repository.reset_batch_for_recovery(
+            job_id,
+            resume_batch["batch_order"],
+            state="rerunning",
+        )
+
+        for batch in resume_plan["remaining_batches"]:
+            if batch["batch_order"] <= resume_batch["batch_order"]:
+                continue
+            self.project_service.processing_job_repository.reset_batch_for_recovery(
+                job_id,
+                batch["batch_order"],
+                state="pending",
+            )
+
+        return self.project_service.get_processing_job_snapshot(job_id)
+
+    def _recover_by_rerun_from_source(self, job_id: str) -> Dict[str, Any]:
+        decision = self.project_service.get_recovery_decision(job_id)
+        if not decision or not decision["canRerunFromSource"]:
+            raise ValueError("Rerun from source is unavailable")
+
+        snapshot = self.project_service.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            raise FileNotFoundError("Processing job not found")
+
+        project_path = self.project_service.get_project_path(snapshot["job"]["project_id"])
+        if not project_path:
+            raise FileNotFoundError("Project folder not found")
+
+        for batch in snapshot["batches"]:
+            for relative_path in batch.get("output_paths", []):
+                absolute_path = Path(project_path) / relative_path
+                if absolute_path.exists():
+                    absolute_path.unlink()
+
+                waveform_path = self.project_service._waveform_path_for_relative(project_path, relative_path)
+                if waveform_path and waveform_path.exists():
+                    waveform_path.unlink()
+
+        self.project_service.processing_job_repository.mark_job_recovering(job_id)
+        self.project_service.processing_job_repository.reset_batches_from_order(job_id, 1)
+        return self.project_service.get_processing_job_snapshot(job_id)
 
     def unify_tracks(self, project_id: str, track_names: List[str]) -> str:
         """

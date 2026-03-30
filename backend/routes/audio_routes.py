@@ -23,12 +23,112 @@ audio_bp = Blueprint('audio', __name__)
 
 WORKFLOW_MAP = MODULE_REGISTRY
 
+
+def _get_active_job_conflict():
+    active_snapshot = project_service.get_active_processing_job_snapshot()
+    if not active_snapshot:
+        return None
+
+    job = active_snapshot["job"]
+    return jsonify({
+        'error': 'job already active',
+        'code': 'job_already_active',
+        'active_job': active_snapshot,
+        'job_id': job['id'],
+        'project_id': job['project_id'],
+    }), 409
+
 @audio_bp.route('/modules', methods=['GET'])
 def get_modules():
     return jsonify({'modules': get_modules_for_api()}), 200
 
+
+@audio_bp.route('/active', methods=['GET'])
+def get_active_processing():
+    active_snapshot = project_service.get_active_processing_job_snapshot()
+    return jsonify({'active_job': active_snapshot}), 200
+
+
+@audio_bp.route('/processing/<job_id>/recover', methods=['POST'])
+def recover_processing(job_id):
+    data = request.get_json(silent=True) or {}
+    recovery_mode = data.get("recoveryMode")
+    if recovery_mode not in {"safe_resume", "rerun_from_source"}:
+        return jsonify({'error': 'recoveryMode must be one of: safe_resume, rerun_from_source'}), 400
+
+    try:
+        snapshot = audio_service.recover_processing_job(job_id, recovery_mode)
+        if not snapshot:
+            return jsonify({'error': 'Processing job not found'}), 404
+
+        sse_manager.publish(
+            snapshot["job"]["project_id"],
+            "processing_updated",
+            {
+                "job_id": snapshot["job"]["id"],
+                "project_id": snapshot["job"]["project_id"],
+                "state": snapshot["job"]["state"],
+            },
+        )
+        return jsonify({
+            **snapshot,
+            "recovery": project_service.get_recovery_decision(job_id),
+        }), 200
+    except FileNotFoundError:
+        return jsonify({'error': 'Processing job not found'}), 404
+    except ValueError as exc:
+        decision = project_service.get_recovery_decision(job_id)
+        payload = {'error': str(exc)}
+        if decision:
+            payload["recovery"] = decision
+        return jsonify(payload), 409
+
+
+@audio_bp.route('/processing/<job_id>/discard', methods=['POST'])
+def discard_processing(job_id):
+    snapshot = project_service.get_processing_job_snapshot(job_id)
+    if not snapshot:
+        return jsonify({'error': 'Processing job not found'}), 404
+
+    project_id = snapshot["job"]["project_id"]
+    discarded = project_service.discard_recoverable_job(job_id)
+    if not discarded:
+        return jsonify({'error': 'Processing job not found'}), 404
+
+    sse_manager.publish(
+        project_id,
+        "processing_updated",
+        {
+            "job_id": job_id,
+            "project_id": project_id,
+            "state": "discarded",
+        },
+    )
+    return jsonify({"discarded": True}), 200
+
+
+@audio_bp.route('/processing/<job_id>/acknowledge', methods=['POST'])
+def acknowledge_processing_completion(job_id):
+    snapshot = project_service.acknowledge_processing_completion(job_id)
+    if not snapshot:
+        return jsonify({'error': 'Processing job not found'}), 404
+    sse_manager.publish(
+        snapshot["job"]["project_id"],
+        "processing_updated",
+        {
+            "job_id": snapshot["job"]["id"],
+            "project_id": snapshot["job"]["project_id"],
+            "state": snapshot["job"]["state"],
+        },
+    )
+    return jsonify(snapshot), 200
+
 @audio_bp.route('/process', methods=['POST'])
 def process_audio():
+    active_job_conflict = _get_active_job_conflict()
+    if active_job_conflict:
+        return active_job_conflict
+
     if 'file' not in request.files:
         return jsonify({'error': 'No file part'}), 400
 
@@ -79,6 +179,10 @@ def process_audio():
 
 @audio_bp.route('/process-url', methods=['POST'])
 def process_url():
+    active_job_conflict = _get_active_job_conflict()
+    if active_job_conflict:
+        return active_job_conflict
+
     data = request.json
     url = data.get('url')
     modules_to_run = data.get('modules', [])
@@ -96,8 +200,39 @@ def process_url():
     try:
         with useSSEManager(sse_manager, temp_project_id) as (_sse_manager, state):
             sse_message_handler = SSEMessageHandler(temp_project_id, _sse_manager)
+            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+            project_id = f"{timestamp}_{get_ascii_prefix(temp_project_id)}"
+            state["job_id"] = project_id
+            sse_message_handler.set_project_id(project_id)
+            output_folder = project_service.create_project_folder(project_id)
+            job_id = audio_service._build_job_id(project_id)
 
-            downloaded_filepath, original_filename, thumbnail_url, video_title = audio_service.download_url(url, sse_message_handler)
+            project_service.create_processing_job(
+                {
+                    "id": job_id,
+                    "project_id": project_id,
+                    "state": "running",
+                    "source_type": "url",
+                    "source_name": url,
+                    "requested_by": "user",
+                    "download_state": "running",
+                    "download_progress": 0,
+                    "started_at": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+            )
+            sse_message_handler.publish_processing_updated(job_id, project_id, "running")
+
+            downloaded_filepath, original_filename, thumbnail_url, video_title = audio_service.download_url(
+                url,
+                sse_message_handler,
+                job_id=job_id,
+            )
+            audio_service.update_processing_download_state(
+                job_id,
+                "completed",
+                100,
+                sse_message_handler=sse_message_handler,
+            )
 
             filename = sanitize_filename(original_filename)
             if filename != original_filename:
@@ -105,20 +240,22 @@ def process_url():
                 os.rename(downloaded_filepath, new_downloaded_filepath)
                 downloaded_filepath = new_downloaded_filepath
 
-            timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-            filename_no_ext = os.path.splitext(filename)[0]
-            project_id = f"{timestamp}_{get_ascii_prefix(filename_no_ext)}"
-            state["job_id"] = project_id
-            sse_message_handler.set_project_id(project_id)
-
-            output_folder = project_service.create_project_folder(project_id)
             persistent_filepath = os.path.join(output_folder, filename)
 
             import shutil
             shutil.move(downloaded_filepath, persistent_filepath)
             file_service.cleanup_upload_folder()
 
-            result = audio_service.process_separation(project_id, filename, modules_to_run, sse_message_handler, thumbnail=thumbnail_url, display_name=video_title)
+            result = audio_service.process_separation(
+                project_id,
+                filename,
+                modules_to_run,
+                sse_message_handler,
+                thumbnail=thumbnail_url,
+                display_name=video_title,
+                source_type="url",
+                job_id=job_id,
+            )
             return jsonify(result), 200
 
     except Exception as e:
@@ -128,6 +265,10 @@ def process_url():
 
 @audio_bp.route('/project/<project_id>/run-modules', methods=['POST'])
 def run_additional_modules(project_id):
+    active_job_conflict = _get_active_job_conflict()
+    if active_job_conflict:
+        return active_job_conflict
+
     data = request.json
     modules_to_run = data.get('modules', [])
 
