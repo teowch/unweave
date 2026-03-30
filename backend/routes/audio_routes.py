@@ -49,6 +49,41 @@ def get_active_processing():
     return jsonify({'active_job': active_snapshot}), 200
 
 
+@audio_bp.route('/processing/<job_id>/recover', methods=['POST'])
+def recover_processing(job_id):
+    data = request.get_json(silent=True) or {}
+    recovery_mode = data.get("recoveryMode")
+    if recovery_mode not in {"safe_resume", "rerun_from_source"}:
+        return jsonify({'error': 'recoveryMode must be one of: safe_resume, rerun_from_source'}), 400
+
+    try:
+        snapshot = audio_service.recover_processing_job(job_id, recovery_mode)
+        if not snapshot:
+            return jsonify({'error': 'Processing job not found'}), 404
+
+        sse_manager.publish(
+            snapshot["job"]["project_id"],
+            "processing_updated",
+            {
+                "job_id": snapshot["job"]["id"],
+                "project_id": snapshot["job"]["project_id"],
+                "state": snapshot["job"]["state"],
+            },
+        )
+        return jsonify({
+            **snapshot,
+            "recovery": project_service.get_recovery_decision(job_id),
+        }), 200
+    except FileNotFoundError:
+        return jsonify({'error': 'Processing job not found'}), 404
+    except ValueError as exc:
+        decision = project_service.get_recovery_decision(job_id)
+        payload = {'error': str(exc)}
+        if decision:
+            payload["recovery"] = decision
+        return jsonify(payload), 409
+
+
 @audio_bp.route('/processing/<job_id>/acknowledge', methods=['POST'])
 def acknowledge_processing_completion(job_id):
     snapshot = project_service.acknowledge_processing_completion(job_id)

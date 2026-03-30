@@ -353,6 +353,44 @@ class ProcessingJobRepository:
                 (project_id,),
             )
 
+    def mark_job_recovering(self, job_id, *, finished_at=None):
+        self.update_job_state(job_id, "recovering", finished_at=finished_at)
+
+    def mark_job_discarded(self, job_id, *, finished_at=None):
+        self.update_job_state(job_id, "discarded", finished_at=finished_at)
+
+    def reset_batch_for_recovery(self, job_id, batch_order, *, state="rerunning"):
+        self.update_batch_state(
+            job_id,
+            batch_order,
+            state,
+            progress=0,
+            started_at=None,
+            finished_at=None,
+            output_paths=[],
+            error_message=None,
+            cleanup_required=False,
+        )
+
+    def reset_batches_from_order(self, job_id, starting_batch_order):
+        with self.database.transaction() as connection:
+            connection.execute(
+                """
+                UPDATE processing_batches
+                SET
+                    state = 'pending',
+                    progress = 0,
+                    started_at = NULL,
+                    finished_at = NULL,
+                    output_paths = '[]',
+                    error_message = NULL,
+                    cleanup_required = 0,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE job_id = ? AND batch_order >= ?
+                """,
+                (job_id, starting_batch_order),
+            )
+
     def _hydrate_batch_row(self, row):
         batch = dict(row)
         batch["output_paths"] = json.loads(batch["output_paths"] or "[]")

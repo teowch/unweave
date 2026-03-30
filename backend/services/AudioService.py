@@ -413,6 +413,84 @@ class AudioService:
         if sse_message_handler and hasattr(sse_message_handler, "publish_processing_updated"):
             sse_message_handler.publish_processing_updated(job_id, project_id, state)
 
+    def recover_processing_job(self, job_id: str, recovery_mode: str, sse_message_handler=None) -> Dict[str, Any]:
+        decision = self.project_service.get_recovery_decision(job_id)
+        if not decision:
+            raise FileNotFoundError("Processing job not found")
+
+        if recovery_mode not in {"safe_resume", "rerun_from_source"}:
+            raise ValueError("Unsupported recoveryMode")
+
+        if recovery_mode == "safe_resume":
+            if not decision["canSafeResume"]:
+                raise ValueError(decision["recoveryMessage"] or "Safe resume is unavailable")
+            snapshot = self._recover_by_safe_resume(job_id)
+        else:
+            if not decision["canRerunFromSource"]:
+                raise ValueError(decision["recoveryMessage"] or "Rerun from source is unavailable")
+            snapshot = self._recover_by_rerun_from_source(job_id)
+
+        self._publish_processing_updated(
+            sse_message_handler,
+            snapshot["job"]["id"],
+            snapshot["job"]["project_id"],
+            snapshot["job"]["state"],
+        )
+        return self.project_service.get_active_processing_job_snapshot() or snapshot
+
+    def _recover_by_safe_resume(self, job_id: str) -> Dict[str, Any]:
+        resume_plan = self.project_service.get_recovery_resume_plan(job_id)
+        if not resume_plan or not resume_plan["resume_from"]:
+            raise ValueError("Safe resume is unavailable")
+
+        self.project_service.cleanup_interrupted_batch_artifacts(job_id)
+        self.project_service.processing_job_repository.mark_job_recovering(job_id)
+
+        resume_batch = resume_plan["resume_from"]
+        self.project_service.processing_job_repository.reset_batch_for_recovery(
+            job_id,
+            resume_batch["batch_order"],
+            state="rerunning",
+        )
+
+        for batch in resume_plan["remaining_batches"]:
+            if batch["batch_order"] <= resume_batch["batch_order"]:
+                continue
+            self.project_service.processing_job_repository.reset_batch_for_recovery(
+                job_id,
+                batch["batch_order"],
+                state="pending",
+            )
+
+        return self.project_service.get_processing_job_snapshot(job_id)
+
+    def _recover_by_rerun_from_source(self, job_id: str) -> Dict[str, Any]:
+        decision = self.project_service.get_recovery_decision(job_id)
+        if not decision or not decision["canRerunFromSource"]:
+            raise ValueError("Rerun from source is unavailable")
+
+        snapshot = self.project_service.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            raise FileNotFoundError("Processing job not found")
+
+        project_path = self.project_service.get_project_path(snapshot["job"]["project_id"])
+        if not project_path:
+            raise FileNotFoundError("Project folder not found")
+
+        for batch in snapshot["batches"]:
+            for relative_path in batch.get("output_paths", []):
+                absolute_path = Path(project_path) / relative_path
+                if absolute_path.exists():
+                    absolute_path.unlink()
+
+                waveform_path = self.project_service._waveform_path_for_relative(project_path, relative_path)
+                if waveform_path and waveform_path.exists():
+                    waveform_path.unlink()
+
+        self.project_service.processing_job_repository.mark_job_recovering(job_id)
+        self.project_service.processing_job_repository.reset_batches_from_order(job_id, 1)
+        return self.project_service.get_processing_job_snapshot(job_id)
+
     def unify_tracks(self, project_id: str, track_names: List[str]) -> str:
         """
         Mixes multiple tracks into one. Returns the new filename.

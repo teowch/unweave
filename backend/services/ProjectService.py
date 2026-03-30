@@ -161,7 +161,15 @@ class ProjectService:
     def get_active_processing_job_snapshot(self) -> Optional[Dict[str, Any]]:
         if not self.processing_job_repository:
             return None
-        return self.processing_job_repository.get_active_processing_job()
+        recoverable_snapshot = self.processing_job_repository.get_recoverable_job_snapshot()
+        if recoverable_snapshot:
+            return self._attach_recovery_decision(recoverable_snapshot)
+
+        snapshot = self.processing_job_repository.get_active_processing_job()
+        if snapshot:
+            return self._attach_recovery_decision(snapshot)
+
+        return None
 
     def create_processing_job(self, job_row: Dict[str, Any]) -> None:
         if not self.processing_job_repository:
@@ -191,7 +199,10 @@ class ProjectService:
     def get_recoverable_processing_job_snapshot(self) -> Optional[Dict[str, Any]]:
         if not self.processing_job_repository:
             return None
-        return self.processing_job_repository.get_recoverable_job_snapshot()
+        snapshot = self.processing_job_repository.get_recoverable_job_snapshot()
+        if snapshot:
+            return self._attach_recovery_decision(snapshot)
+        return None
 
     def get_first_non_completed_batch(self, job_id: str) -> Optional[Dict[str, Any]]:
         if not self.processing_job_repository:
@@ -283,6 +294,54 @@ class ProjectService:
 
         deleted = self.delete_project(project_id)
         return deleted
+
+    def get_recovery_decision(self, job_id: str) -> Optional[Dict[str, Any]]:
+        snapshot = self.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            return None
+
+        if snapshot["job"]["state"] == "interrupted":
+            self.update_processing_job_state(job_id, "awaiting_recovery")
+            snapshot = self.get_processing_job_snapshot(job_id)
+
+        resume_plan = self.get_recovery_resume_plan(job_id)
+        if not resume_plan:
+            return None
+
+        fallback = resume_plan.get("fallback")
+        recovering_mode = self._detect_recovering_mode(snapshot)
+        source_available = bool(snapshot["job"].get("source_type") and snapshot["job"].get("source_name"))
+        can_safe_resume = recovering_mode == "safe_resume" or resume_plan["resume_from"] is not None
+        can_rerun_from_source = source_available or recovering_mode == "rerun_from_source" or bool(
+            fallback and fallback.get("type") == "full_rerun"
+        )
+
+        if recovering_mode:
+            recovery_mode = recovering_mode
+            recovery_message = None
+        elif can_safe_resume:
+            recovery_mode = "safe_resume"
+            recovery_message = None
+        elif can_rerun_from_source:
+            recovery_mode = "rerun_from_source"
+            if fallback["source_type"] == "url":
+                recovery_message = "Safe resume is unavailable. Recover by rerunning from the persisted URL."
+            else:
+                recovery_message = "Safe resume is unavailable. Recover by rerunning from the original uploaded file."
+        else:
+            recovery_mode = "discard_only"
+            recovery_message = "Safe resume is unavailable and no original source remains. Discard is required."
+
+        return {
+            "jobId": snapshot["job"]["id"],
+            "projectId": snapshot["job"]["project_id"],
+            "projectName": snapshot["project"]["name"],
+            "state": snapshot["job"]["state"],
+            "canSafeResume": can_safe_resume,
+            "canRerunFromSource": can_rerun_from_source,
+            "recoveryMode": recovery_mode,
+            "recoveryMessage": recovery_message,
+        }
 
     def _sync_sqlite_cache(self, project_id: str) -> None:
         snapshot = self.get_sqlite_project_snapshot(project_id)
@@ -564,3 +623,23 @@ class ProjectService:
             return Path(project_path) / relative
 
         return Path(project_path) / "waveforms" / f"{relative.stem}.json"
+
+    def _attach_recovery_decision(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        job_state = snapshot["job"]["state"]
+        if job_state in {"interrupted", "awaiting_recovery", "recovering"}:
+            enriched_snapshot = dict(snapshot)
+            enriched_snapshot["recovery"] = self.get_recovery_decision(snapshot["job"]["id"])
+            return enriched_snapshot
+        return snapshot
+
+    def _detect_recovering_mode(self, snapshot: Dict[str, Any]) -> Optional[str]:
+        if snapshot["job"]["state"] != "recovering":
+            return None
+
+        if any(batch["state"] == "rerunning" for batch in snapshot["batches"]):
+            return "safe_resume"
+
+        if snapshot["batches"] and all(batch["state"] == "pending" for batch in snapshot["batches"]):
+            return "rerun_from_source"
+
+        return None
