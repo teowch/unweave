@@ -29,7 +29,7 @@ const CurrentProcessing = ({
   onOpenFinished,
   onDismissFinished,
 }) => {
-  const [showDetails, setShowDetails] = useState(false)
+  const [panelState, setPanelState] = useState('compact')
   const job = activeJob || finishedJob
   const isFinished = !activeJob && Boolean(finishedJob)
 
@@ -59,9 +59,24 @@ const CurrentProcessing = ({
     onOpenActive?.()
   }
 
-  const handleToggleDetails = (event) => {
+  const handleShowCompact = (event) => {
     event.stopPropagation()
-    setShowDetails((current) => !current)
+    setPanelState('compact')
+  }
+
+  const handleHideCompact = (event) => {
+    event.stopPropagation()
+    setPanelState('minimized')
+  }
+
+  const handleShowDetails = (event) => {
+    event.stopPropagation()
+    setPanelState('expanded')
+  }
+
+  const handleCloseDetails = (event) => {
+    event.stopPropagation()
+    setPanelState('compact')
   }
 
   const handleDismiss = (event) => {
@@ -76,23 +91,20 @@ const CurrentProcessing = ({
     }
   }
 
-  const hoverLabel = `${job.projectName} - ${job.overallProgress}%`
+  const showCompactPanel = panelState === 'compact'
+  const showDetails = panelState === 'expanded'
 
   return (
     <section
       className={`current-processing ${isFinished ? 'is-finished' : 'is-active'} ${showDetails ? 'is-expanded' : ''}`}
     >
       <div className="current-processing__anchor">
-        <div className="current-processing__hover-card">
-          <span>{hoverLabel}</span>
-        </div>
-
         <button
           type="button"
           className="current-processing__fab"
-          onClick={handleToggleDetails}
-          aria-expanded={showDetails}
-          aria-label={isFinished ? 'Open finished processing details' : 'Open current processing details'}
+          onClick={panelState === 'minimized' ? handleShowCompact : handleCardClick}
+          aria-expanded={showCompactPanel || showDetails}
+          aria-label={isFinished ? 'Open finished processing' : 'Open current processing'}
         >
           <span className="current-processing__fab-ring" />
           <span className="current-processing__fab-core">
@@ -100,6 +112,34 @@ const CurrentProcessing = ({
           </span>
         </button>
       </div>
+
+      {showCompactPanel ? (
+        <div className="current-processing__compact-panel">
+          <div className="current-processing__compact-header">
+            <p className="current-processing__eyebrow">{isFinished ? 'Finished' : 'Current Processing'}</p>
+            <h2 className="current-processing__compact-title" title={job.projectName}>{job.projectName}</h2>
+          </div>
+
+          <div className="current-processing__progress">
+            <div className="current-processing__progress-meta">
+              <span>{isFinished ? 'Finished' : 'Overall Progress'}</span>
+              <span>{`${job.overallProgress}%`}</span>
+            </div>
+            <div className="current-processing__progress-track" aria-hidden="true">
+              <div className="current-processing__progress-fill" style={{ width: `${job.overallProgress}%` }} />
+            </div>
+          </div>
+
+          <div className="current-processing__actions">
+            <button type="button" className="current-processing__toggle" onClick={handleShowDetails}>
+              More details
+            </button>
+            <button type="button" className="current-processing__toggle" onClick={handleHideCompact}>
+              Hide
+            </button>
+          </div>
+        </div>
+      ) : null}
 
       {showDetails ? (
         <div
@@ -128,8 +168,8 @@ const CurrentProcessing = ({
                 </>
               ) : null}
 
-              <button type="button" className="current-processing__toggle" onClick={handleToggleDetails}>
-                {showDetails ? 'Hide Details' : 'Show Details'}
+              <button type="button" className="current-processing__toggle" onClick={handleCloseDetails}>
+                Hide Details
               </button>
             </div>
           </div>
