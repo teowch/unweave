@@ -188,6 +188,47 @@ class ProjectService:
             return None
         return self.processing_job_repository.get_job_snapshot(job_id)
 
+    def get_recoverable_processing_job_snapshot(self) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_recoverable_job_snapshot()
+
+    def get_first_non_completed_batch(self, job_id: str) -> Optional[Dict[str, Any]]:
+        if not self.processing_job_repository:
+            return None
+        return self.processing_job_repository.get_first_non_completed_batch(job_id)
+
+    def get_recovery_resume_plan(self, job_id: str) -> Optional[Dict[str, Any]]:
+        snapshot = self.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            return None
+
+        resume_from = self.get_first_non_completed_batch(job_id)
+        preserved_batches = [
+            batch for batch in snapshot["batches"] if batch["state"] == "completed"
+        ]
+        remaining_batches = []
+        fallback = None
+
+        if resume_from and self._is_safe_recovery_batch(snapshot, resume_from):
+            remaining_batches = [
+                batch
+                for batch in snapshot["batches"]
+                if batch["batch_order"] >= resume_from["batch_order"]
+            ]
+        else:
+            resume_from = None
+            fallback = self._build_recovery_fallback(snapshot["job"])
+
+        return {
+            "job": snapshot["job"],
+            "project": snapshot["project"],
+            "preserved_batches": preserved_batches,
+            "resume_from": resume_from,
+            "remaining_batches": remaining_batches,
+            "fallback": fallback,
+        }
+
     def acknowledge_processing_completion(self, job_id: str) -> Optional[Dict[str, Any]]:
         if not self.processing_job_repository:
             raise RuntimeError("Processing job repository is not configured")
@@ -195,6 +236,53 @@ class ProjectService:
             job_id,
             datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
         )
+
+    def cleanup_interrupted_batch_artifacts(self, job_id: str) -> bool:
+        resume_plan = self.get_recovery_resume_plan(job_id)
+        if not resume_plan or not resume_plan["resume_from"]:
+            return False
+
+        project_path = self.get_project_path(resume_plan["job"]["project_id"])
+        if not project_path:
+            return False
+
+        removed_any = False
+        for relative_path in resume_plan["resume_from"].get("output_paths", []):
+            absolute_path = Path(project_path) / relative_path
+            if absolute_path.exists():
+                absolute_path.unlink()
+                removed_any = True
+
+            waveform_path = self._waveform_path_for_relative(project_path, relative_path)
+            if waveform_path and waveform_path.exists():
+                waveform_path.unlink()
+                removed_any = True
+
+        return removed_any
+
+    def discard_recoverable_job(self, job_id: str) -> bool:
+        snapshot = self.get_processing_job_snapshot(job_id)
+        if not snapshot:
+            return False
+
+        project_id = snapshot["job"]["project_id"]
+        if not self.processing_job_repository or not self.project_repository:
+            raise RuntimeError("Recovery discard requires repository access")
+
+        with self.processing_job_repository.database.transaction() as connection:
+            connection.execute(
+                "DELETE FROM project_files WHERE project_id = ?",
+                (project_id,),
+            )
+            connection.execute(
+                "DELETE FROM projects WHERE id = ?",
+                (project_id,),
+            )
+
+        self.processing_job_repository.delete_jobs_for_project(project_id)
+
+        deleted = self.delete_project(project_id)
+        return deleted
 
     def _sync_sqlite_cache(self, project_id: str) -> None:
         snapshot = self.get_sqlite_project_snapshot(project_id)
@@ -441,3 +529,38 @@ class ProjectService:
         except Exception as e:
             print(f"Error deleting project {project_id}: {e}")
             raise e
+
+    def _is_safe_recovery_batch(self, snapshot: Dict[str, Any], batch: Dict[str, Any]) -> bool:
+        allowed_states = {"interrupted", "failed", "running"}
+        if batch["state"] not in allowed_states:
+            return False
+
+        for previous_batch in snapshot["batches"]:
+            if previous_batch["batch_order"] >= batch["batch_order"]:
+                break
+            if previous_batch["state"] != "completed":
+                return False
+
+        return bool(batch.get("output_paths"))
+
+    def _build_recovery_fallback(self, job_row: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        source_name = job_row.get("source_name")
+        source_type = job_row.get("source_type")
+        if not source_name or not source_type:
+            return None
+
+        return {
+            "type": "full_rerun",
+            "source_type": source_type,
+            "source_name": source_name,
+        }
+
+    def _waveform_path_for_relative(self, project_path: str, relative_path: str) -> Optional[Path]:
+        relative = Path(relative_path)
+        if relative.suffix.lower() not in {".wav", ".mp3", ".flac"}:
+            return None
+
+        if relative.parts and relative.parts[0] == "waveforms":
+            return Path(project_path) / relative
+
+        return Path(project_path) / "waveforms" / f"{relative.stem}.json"

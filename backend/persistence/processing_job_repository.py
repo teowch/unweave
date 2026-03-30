@@ -270,6 +270,89 @@ class ProcessingJobRepository:
 
         return self.get_job_snapshot(active_row["id"])
 
+    def get_recoverable_job_snapshot(self):
+        with self.database.transaction() as connection:
+            stale_running_row = connection.execute(
+                """
+                SELECT id
+                FROM processing_jobs
+                WHERE state = 'running'
+                ORDER BY COALESCE(started_at, created_at) DESC, id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+            if stale_running_row:
+                connection.execute(
+                    """
+                    UPDATE processing_jobs
+                    SET state = 'awaiting_recovery'
+                    WHERE id = ?
+                    """,
+                    (stale_running_row["id"],),
+                )
+                job_id = stale_running_row["id"]
+            else:
+                recoverable_row = connection.execute(
+                    """
+                    SELECT id
+                    FROM processing_jobs
+                    WHERE state IN ('interrupted', 'awaiting_recovery', 'recovering')
+                    ORDER BY COALESCE(started_at, created_at) DESC, id DESC
+                    LIMIT 1
+                    """
+                ).fetchone()
+                if not recoverable_row:
+                    return None
+                job_id = recoverable_row["id"]
+
+        snapshot = self.get_job_snapshot(job_id)
+        if snapshot and snapshot["job"]["state"] == "interrupted":
+            self.update_job_state(job_id, "awaiting_recovery")
+            snapshot = self.get_job_snapshot(job_id)
+        return snapshot
+
+    def get_first_non_completed_batch(self, job_id):
+        snapshot = self.get_job_snapshot(job_id)
+        if not snapshot:
+            return None
+
+        for batch in snapshot["batches"]:
+            if batch["state"] != "completed":
+                return batch
+
+        return None
+
+    def list_batches_for_job(self, job_id):
+        snapshot = self.get_job_snapshot(job_id)
+        if not snapshot:
+            return []
+        return snapshot["batches"]
+
+    def list_jobs_for_project(self, project_id):
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT id
+                FROM processing_jobs
+                WHERE project_id = ?
+                ORDER BY created_at DESC, id DESC
+                """,
+                (project_id,),
+            ).fetchall()
+
+        return [self.get_job_snapshot(row["id"]) for row in rows]
+
+    def delete_jobs_for_project(self, project_id):
+        with self.database.transaction() as connection:
+            connection.execute(
+                """
+                DELETE FROM processing_jobs
+                WHERE project_id = ?
+                """,
+                (project_id,),
+            )
+
     def _hydrate_batch_row(self, row):
         batch = dict(row)
         batch["output_paths"] = json.loads(batch["output_paths"] or "[]")
