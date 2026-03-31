@@ -91,6 +91,13 @@ const Slider = ({ value, min, max, onChange, orientation = 'horizontal', label, 
     );
 };
 
+const clampEffectiveVolume = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.min(Math.max(value, 0), 1);
+    }
+    return 0;
+};
+
 const StemRow = ({
     stem,
     displayName,
@@ -295,8 +302,9 @@ const StemRow = ({
 
     // Handle Volume Updates from Parent (effective volume includes solo/mute/main logic)
     useEffect(() => {
-        if (!wsRef.current || typeof effectiveVolume !== 'number') return;
-        wsRef.current.setVolume(effectiveVolume);
+        if (!wsRef.current) return;
+        const volume = clampEffectiveVolume(effectiveVolume);
+        wsRef.current.setVolume(volume);
     }, [effectiveVolume, isReady]);
 
     const handleDownload = () => {
