@@ -8,6 +8,36 @@ import './EditorView.css';
 
 import { ArrowLeftIcon } from '../common/Icons';
 
+const DEFAULT_STEM_STATE = {
+    vol: 0.5,
+    muted: false,
+    solo: false,
+    selected: false,
+    locked: false,
+};
+
+const clampNormalizedVolume = (value, fallback = 0.5) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.min(Math.max(value, 0), 1);
+    }
+    if (typeof fallback === 'number' && Number.isFinite(fallback)) {
+        return Math.min(Math.max(fallback, 0), 1);
+    }
+    return 0.5;
+};
+
+const sanitizeStemStateEntry = (stateEntry) => {
+    const base = { ...DEFAULT_STEM_STATE, ...(stateEntry || {}) };
+    return {
+        ...base,
+        vol: clampNormalizedVolume(base.vol, DEFAULT_STEM_STATE.vol),
+        muted: !!base.muted,
+        solo: !!base.solo,
+        locked: !!base.locked,
+        selected: !!base.selected,
+    };
+};
+
 const EditorView = ({ track, onBack, onProjectRefresh, onConsistencyIssue }) => {
     // --- Custom Hooks ---
     const {
@@ -38,7 +68,7 @@ const EditorView = ({ track, onBack, onProjectRefresh, onConsistencyIssue }) => 
         const next = {};
         const allFiles = track.original ? [...track.stems, track.original] : track.stems;
         allFiles.forEach(stem => {
-            next[stem] = stemState[stem] || { vol: 0.5, muted: false, solo: false, selected: false, locked: false };
+            next[stem] = sanitizeStemStateEntry(stemState[stem]);
         });
         return next;
     }, [stemState, track]);
@@ -59,15 +89,16 @@ const EditorView = ({ track, onBack, onProjectRefresh, onConsistencyIssue }) => 
     const effectiveVolumes = useMemo(() => {
         const vols = {};
         const anySolo = activeStemIds.some(id => resolvedStemState[id]?.solo);
+        const safeMainVolume = clampNormalizedVolume(mainVolume, 0.5);
 
         activeStemIds.forEach(stem => {
-            const state = resolvedStemState[stem] || { vol: 0.5, muted: false };
+            const state = resolvedStemState[stem] || DEFAULT_STEM_STATE;
             let effective = state.vol;
 
             if (state.muted) effective = 0;
             if (anySolo && !state.solo) effective = 0;
 
-            vols[stem] = effective * mainVolume;
+            vols[stem] = clampNormalizedVolume(effective * safeMainVolume, 0);
         });
         return vols;
     }, [resolvedStemState, activeStemIds, mainVolume]);

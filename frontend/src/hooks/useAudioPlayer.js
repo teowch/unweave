@@ -126,15 +126,25 @@ export const useAudioPlayer = () => {
         });
     }, [isPlaying]);
 
+    const clampMasterVolume = (value, fallback = mainVolumeRef.current ?? 0.5) => {
+        if (typeof value === 'number' && Number.isFinite(value)) {
+            return Math.min(Math.max(value, 0), 1);
+        }
+        if (typeof fallback === 'number' && Number.isFinite(fallback)) {
+            return Math.min(Math.max(fallback, 0), 1);
+        }
+        return 0.5;
+    };
+
     const setVolume = useCallback((vol) => {
-        setMainVolume(vol);
+        setMainVolume(clampMasterVolume(vol));
         // Note: Individual stem volume logic (mute/solo) should be handled by the consumer (EditorView)
         // possibly by passing a specific volume to the StemRow, which multiplies by mainVolume.
         // But if we want global volume, we can do it here if we track stem states?
         // Better: let EditorView calculate effective volume = stemVol * mainVol
         // and call setVolume on the WS instance directly?
         // OR: useAudioPlayer exposes a `updateVolume(id, vol)`?
-        // For now, simpliest split: EditorView manages "Logic Mixer", useAudioPlayer manages "Transport".
+        // For now, simplest split: EditorView manages "Logic Mixer", useAudioPlayer manages "Transport".
     }, []);
 
     // When isPlaying changes, ensure sync
