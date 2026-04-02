@@ -615,7 +615,7 @@
     position: absolute;
     top: 0;
     bottom: 0;
-    left: 220px;
+    left: 250px;
     right: 0;
     pointer-events: none;
     z-index: 10;
@@ -656,7 +656,7 @@
     display: flex;
     background: #1e1e1e;
     overflow: hidden;
-    height: 125px;
+    min-height: 150px;
     border: 1px solid #333;
 }
 
@@ -666,7 +666,7 @@
 }
 
 .stem-controls-left {
-    width: 220px;
+    width: 250px;
     background: #252525;
     padding: 0.5rem;
     display: flex;
@@ -698,6 +698,7 @@
     justify-content: space-between;
     min-width: 0;
     padding-top: 4px;
+    gap: 0.45rem;
 }
 
 .ctl-col-mix {
@@ -724,12 +725,14 @@
     align-items: center;
     justify-content: center;
     width: 100%;
+    min-height: 34px;
 }
 
 /* Slider (Generic) */
 .slider-wrapper {
     position: relative;
     cursor: pointer;
+    touch-action: none;
 }
 
 .slider-wrapper.disabled {
@@ -761,6 +764,63 @@
     left: 0;
     width: 100%;
     background: #7c4dff;
+}
+
+.slider-wrapper.horizontal {
+    width: 100%;
+    height: 20px;
+    display: flex;
+    align-items: center;
+}
+
+.slider-wrapper.horizontal .slider-track {
+    width: 100%;
+    height: 8px;
+    background: #151515;
+    border-radius: 999px;
+    position: relative;
+    overflow: hidden;
+}
+
+.slider-wrapper.horizontal .slider-fill {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: #7c4dff;
+}
+
+.pan-control {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 0.28rem;
+    padding: 0.35rem 0.45rem 0.15rem;
+    border: 1px solid #333;
+    border-radius: 6px;
+    background: #1d1d1d;
+}
+
+.pan-control-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.pan-label,
+.pan-value {
+    font-size: 0.63rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.pan-label {
+    color: var(--text-muted);
+}
+
+.pan-value {
+    color: var(--text-main);
 }
 
 /* Stem Name */
@@ -939,6 +999,7 @@
     position: relative;
     background: #000;
     height: 100%;
+    min-height: 150px;
 }
 
 .waveform-container {
@@ -1054,7 +1115,7 @@
 
 /* Transport Left: The Control Center */
 .transport-left {
-    width: 220px;
+    width: 250px;
     flex-shrink: 0;
     display: flex;
     flex-direction: column;

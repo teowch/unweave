@@ -35,7 +35,7 @@ const Slider = ({ value, min, max, onChange, orientation = 'horizontal', label, 
         onChange(newValue);
     };
 
-    const handleMouseDown = (e) => {
+    const handlePointerDown = (e) => {
         e.preventDefault();
         e.stopPropagation(); // Prevent drag from propagating to parent (like reordering)
 
@@ -43,17 +43,17 @@ const Slider = ({ value, min, max, onChange, orientation = 'horizontal', label, 
 
         handleInteraction(getPos(e));
 
-        const onMouseMove = (moveEvent) => {
+        const onPointerMove = (moveEvent) => {
             handleInteraction(getPos(moveEvent));
         };
 
-        const onMouseUp = () => {
-            window.removeEventListener('mousemove', onMouseMove);
-            window.removeEventListener('mouseup', onMouseUp);
+        const onPointerUp = () => {
+            window.removeEventListener('pointermove', onPointerMove);
+            window.removeEventListener('pointerup', onPointerUp);
         };
 
-        window.addEventListener('mousemove', onMouseMove);
-        window.addEventListener('mouseup', onMouseUp);
+        window.addEventListener('pointermove', onPointerMove);
+        window.addEventListener('pointerup', onPointerUp);
     };
 
     // Calculate Styles
@@ -66,8 +66,17 @@ const Slider = ({ value, min, max, onChange, orientation = 'horizontal', label, 
         style.bottom = '0%';
         style.width = '100%';
     } else {
-        style.width = `${normalized * 100}%`;
-        style.left = '0%';
+        const crossesZero = min < 0 && max > 0;
+        if (crossesZero) {
+            const zeroNormalized = (0 - min) / range;
+            const start = Math.min(normalized, zeroNormalized);
+            const end = Math.max(normalized, zeroNormalized);
+            style.left = `${start * 100}%`;
+            style.width = `${(end - start) * 100}%`;
+        } else {
+            style.width = `${normalized * 100}%`;
+            style.left = '0%';
+        }
         style.height = '100%';
     }
 
@@ -79,7 +88,7 @@ const Slider = ({ value, min, max, onChange, orientation = 'horizontal', label, 
             <div
                 className="slider-track"
                 ref={barRef}
-                onMouseDown={handleMouseDown}
+                onPointerDown={handlePointerDown}
             >
                 <div className="slider-track-bg" />
                 <div
@@ -98,10 +107,17 @@ const clampEffectiveVolume = (value) => {
     return 0;
 };
 
+const clampPan = (value) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.min(Math.max(value, -1), 1);
+    }
+    return 0;
+};
+
 const StemRow = ({
     stem,
     displayName,
-    sState = { vol: 0.5, muted: false, solo: false, locked: false },
+    sState = { vol: 0.5, pan: 0, muted: false, solo: false, locked: false },
     audioUrl,
     waveformPeaks,
     onUpdate,
@@ -119,6 +135,7 @@ const StemRow = ({
     const nameToShow = displayName || stem;
     const containerRef = useRef(null);
     const wsRef = useRef(null);
+    const pannerNodeRef = useRef(null);
     const [isReady, setIsReady] = useState(false);
     const stemNameRef = useRef(null);
     const [shouldScroll, setShouldScroll] = useState(false);
@@ -195,6 +212,8 @@ const StemRow = ({
 
         const abortController = new AbortController();
         let ws = null;
+        let mediaNode = null;
+        let pannerNode = null;
 
         const initWaveSurfer = async () => {
             try {
@@ -213,7 +232,6 @@ const StemRow = ({
                     normalize: true,
                     cursorWidth: 0,
                     cursorColor: 'transparent',
-                    audioContext: audioContext,
                     // Only use precomputed peaks when audio isn't available yet.
                     // When audioUrl IS available, let WaveSurfer load audio normally
                     // so the 'ready' event fires and playback registration works.
@@ -222,16 +240,39 @@ const StemRow = ({
                         duration: waveformPeaks.duration,
                     } : {}),
                 });
-
                 wsRef.current = ws;
 
                 // Set up event listeners BEFORE loading
-                ws.on('ready', () => {
+                ws.on('ready', async () => {
                     if (abortController.signal.aborted) return;
 
-                    setIsReady(true);
-                    ws.setVolume(sState?.muted ? 0 : (sState?.vol ?? 0.5));
-                    registerWaveSurfer(stem, ws);
+                    try {
+                        if (audioUrl) {
+                            const mediaEl = ws.getMediaElement();
+
+                            // If your URLs are remote, this helps avoid CORS-related silence
+                            mediaEl.crossOrigin = 'anonymous';
+
+                            if (audioContext.state === 'suspended') {
+                                await audioContext.resume();
+                            }
+
+                            mediaNode = audioContext.createMediaElementSource(mediaEl);
+                            pannerNode = audioContext.createStereoPanner();
+                            pannerNodeRef.current = pannerNode;
+                            pannerNode.pan.setValueAtTime(clampPan(sState?.pan), audioContext.currentTime);
+
+                            mediaNode.connect(pannerNode);
+                            pannerNode.connect(audioContext.destination);
+                        }
+
+                        setIsReady(true);
+                        ws.setVolume(sState?.muted ? 0 : (sState?.vol ?? 0.5));
+                        registerWaveSurfer(stem, ws);
+
+                    } catch (err) {
+                        console.error('Audio graph setup failed:', stem, err);
+                    }
                 });
 
                 ws.on('error', (err) => {
@@ -254,6 +295,9 @@ const StemRow = ({
 
                 // Check if we were aborted during loading
                 if (abortController.signal.aborted) {
+                    if (mediaNode) mediaNode.disconnect();
+                    if (pannerNode) pannerNode.disconnect();
+                    pannerNodeRef.current = null;
                     if (ws) {
                         if (ws.unAll)
                             ws.unAll();
@@ -285,6 +329,9 @@ const StemRow = ({
             // 2. Cleanup WaveSurfer instance
             // Use a small timeout to ensure abort signal is processed
             setTimeout(() => {
+                if (mediaNode) mediaNode.disconnect();
+                if (pannerNode) pannerNode.disconnect();
+                pannerNodeRef.current = null;
                 if (ws) {
                     if (ws.unAll)
                         ws.unAll();
@@ -306,6 +353,14 @@ const StemRow = ({
         const volume = clampEffectiveVolume(effectiveVolume);
         wsRef.current.setVolume(volume);
     }, [effectiveVolume, isReady]);
+
+    useEffect(() => {
+        if (!audioContext || !pannerNodeRef.current) return;
+        pannerNodeRef.current.pan.setValueAtTime(clampPan(sState?.pan), audioContext.currentTime);
+    }, [audioContext, sState?.pan]);
+
+    const panValue = clampPan(sState?.pan);
+    const panLabel = panValue < -0.05 ? `L${Math.round(Math.abs(panValue) * 100)}` : panValue > 0.05 ? `R${Math.round(panValue * 100)}` : 'C';
 
     const handleDownload = () => {
         if (onDownload) {
@@ -418,6 +473,22 @@ const StemRow = ({
                     >
                         <SoloIcon size={16} />
                     </button>
+
+                    <div className="pan-control">
+                        <div className="pan-control-header">
+                            <span className="pan-label">Pan</span>
+                            <span className="pan-value">{panLabel}</span>
+                        </div>
+                        <Slider
+                            value={panValue}
+                            min={-1}
+                            max={1}
+                            orientation="horizontal"
+                            onChange={(val) => onUpdate('pan', val)}
+                            label={`Pan ${panLabel}`}
+                            disabled={sState?.locked}
+                        />
+                    </div>
                 </div>
 
                 {/* Column 3: Mix (Slider + Mute) */}

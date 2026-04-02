@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useRef, useMemo } from 'react';
 import TransportBar from './TransportBar';
 import StemRow from './StemRow';
 import StemBrowser from './StemBrowser';
@@ -10,6 +10,7 @@ import { ArrowLeftIcon } from '../common/Icons';
 
 const DEFAULT_STEM_STATE = {
     vol: 0.5,
+    pan: 0,
     muted: false,
     solo: false,
     selected: false,
@@ -26,11 +27,22 @@ const clampNormalizedVolume = (value, fallback = 0.5) => {
     return 0.5;
 };
 
+const clampPan = (value, fallback = 0) => {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+        return Math.min(Math.max(value, -1), 1);
+    }
+    if (typeof fallback === 'number' && Number.isFinite(fallback)) {
+        return Math.min(Math.max(fallback, -1), 1);
+    }
+    return 0;
+};
+
 const sanitizeStemStateEntry = (stateEntry) => {
     const base = { ...DEFAULT_STEM_STATE, ...(stateEntry || {}) };
     return {
         ...base,
         vol: clampNormalizedVolume(base.vol, DEFAULT_STEM_STATE.vol),
+        pan: clampPan(base.pan, DEFAULT_STEM_STATE.pan),
         muted: !!base.muted,
         solo: !!base.solo,
         locked: !!base.locked,
@@ -113,18 +125,14 @@ const EditorView = ({ track, onBack, onProjectRefresh, onConsistencyIssue }) => 
         }
     };
 
-    // Audio Context is managed by WaveSurfer internally usually, but shared context helps.
-    // Original had `new AudioContext()` in Effect.
-    // We can lazily create one or let WaveSurfer handle it.
-    // However, for visualization consistency, passing a shared context is good.
-    const audioContext = useMemo(() => new (window.AudioContext || window.webkitAudioContext)(), []);
-    useEffect(() => {
-        return () => {
-            if (audioContext.state !== 'closed') {
-                audioContext.close();
-            }
-        };
-    }, [audioContext]);
+    // Keep one shared AudioContext alive for the editor session.
+    // React StrictMode remounts components in dev, so closing it in cleanup
+    // leaves stem rows with a dead context and silent playback.
+    const audioContextRef = useRef(null);
+    if (!audioContextRef.current) {
+        audioContextRef.current = new (window.AudioContext || window.webkitAudioContext)();
+    }
+    const audioContext = audioContextRef.current;
 
     // Stems to render from the canonical project snapshot.
     const stemsToRender = track.original
@@ -219,7 +227,7 @@ const EditorView = ({ track, onBack, onProjectRefresh, onConsistencyIssue }) => 
                                     stem={stem}
                                     displayName={stem === track.original ? track.name : null}
                                     visible={activeStemIds.includes(stem)}
-                                    sState={resolvedStemState[stem] || { vol: 0.5, muted: false, solo: false, locked: false }}
+                                    sState={resolvedStemState[stem] || { vol: 0.5, pan: 0, muted: false, solo: false, locked: false }}
                                     audioUrl={audioUrls[stem]}
                                     waveformPeaks={waveformPeaks[stem]}
                                     onUpdate={(key, val) => updateStem(stem, key, val)}
