@@ -1,102 +1,156 @@
 # Unweave
 
-**Unweave** is a powerful AI-driven audio separation and processing web application. It allows users to separate stems (vocals, drums, bass, etc.) from audio tracks and YouTube videos using state-of-the-art models, all through a modern web interface.
+Unweave is a local-first desktop app for audio separation. It packages an Electron shell, a Flask backend, and a React renderer into one workstation-oriented tool for splitting tracks into stems, browsing a local project library, and working with outputs on disk.
 
-### Documentation Index
+## What It Does
 
-- [Frontend Documentation](frontend/README.md)
-- [Backend Documentation](backend/README.md)
-- [API Documentation](API_DOCUMENTATION.md)
+- Separate uploaded audio files into stems with `audio-separator` and related model backends.
+- Download and process supported URLs, including video/audio sources handled by `yt-dlp`.
+- Keep project and file state locally so the editor, library, and recovery flows can operate without cloud services.
+- Stream processing progress to the UI over SSE.
+- Package the frontend, backend, Python runtime, and supporting assets into an Electron build.
 
-## Preview
+## Project Layout
 
-<p align="center">
-  <img src="docs/screenshots/home.png" alt="Home View" width="45%"/>
-  <img src="docs/screenshots/library.png" alt="Library View" width="45%"/>
-</p>
-<p align="center">
-  <em>Home / Upload View</em> &nbsp; &nbsp; &nbsp; &nbsp; <em>Project Library</em>
-</p>
-<p align="center">
-  <img src="docs/screenshots/project.png" alt="Project View" width="75%"/>
-  <br>
-  <em>Audio Editor Workspace</em>
-</p>
+- `frontend/`: React 19 + Vite renderer UI.
+- `backend/`: Flask API, audio pipeline, project services, and utilities.
+- `electron/`: desktop shell, backend sidecar startup, preload bridge, packaging config.
+- `dist-electron/`: packaged Electron outputs.
+- `docs/`: screenshots and supporting project assets.
 
-## Features
+## Documentation Index
 
-- **Audio Separation**: Separate tracks into stems using advanced models (e.g., Demucs, MDX-Net via `audio-separator`).
-- **URL Processing**: Download and process audio directly from YouTube and other supported platforms.
-- **Project Management**: Auto-saving projects with detailed metadata and history.
-- **Real-time Updates**: Live progress tracking via Server-Sent Events (SSE).
-- **GPU Acceleration**: Built-in support for CUDA hardware acceleration.
-- **Post-Processing**: Unify specific stems or run additional processing modules on existing projects.
+- [Backend Guide](backend/README.md)
+- [Frontend Guide](frontend/README.md)
+- [API Reference](API_DOCUMENTATION.md)
 
 ## Prerequisites
 
-Before running the project, ensure you have the following installed:
+- Node.js 18+
+- Python 3.10+
+- npm
+- A Python virtual environment at `backend/.venv`
 
-- **Python**: Version 3.10 or higher.
-- **Node.js**: Version 18 or higher.
-- **FFmpeg**: Shared libraries are required.
-    - *Windows*: The project uses `static-ffmpeg` to auto-provision, but having system FFmpeg is recommended as a fallback.
-- **CUDA Toolkit** (Optional): Version 12.x recommended for GPU acceleration on NVIDIA cards.
+Optional:
 
-## Quick Start
+- NVIDIA CUDA 12.x or another supported GPU runtime if you want hardware acceleration
+- System FFmpeg as a fallback, though the app can bundle/provision FFmpeg for packaged use
 
-### 1. Backend Setup
+## Development Setup
 
-The backend is built with Flask and Python.
+### 1. Install Node Dependencies
 
-1. Navigate to the backend directory:
-   ```bash
-   cd backend
-   ```
+At the repo root:
 
-2. Create and activate a virtual environment:
-   ```bash
-   # Windows
-   python -m venv .venv
-   .venv\Scripts\activate
+```bash
+npm install
+```
 
-   # Linux/Mac
-   python3 -m venv .venv
-   source .venv/bin/activate
-   ```
+In the frontend:
 
-3. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   *Note: This will install PyTorch with CUDA 12.4 support by default.*
+```bash
+cd frontend
+npm install
+```
 
-4. Start the API server:
-   ```bash
-   python api.py
-   ```
-   The backend will start at `http://127.0.0.1:5000`.
+In Electron:
 
-### 2. Frontend Setup
+```bash
+cd electron
+npm install
+```
 
-The frontend is built with React and Vite.
+### 2. Set Up the Backend Environment
 
-1. Open a new terminal and navigate to the frontend directory:
-   ```bash
-   cd frontend
-   ```
+```bash
+cd backend
+python -m venv .venv
+```
 
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
+Activate it:
 
-3. Start the development server:
-   ```bash
-   npm run dev
-   ```
-   The application will be accessible at `http://localhost:5173`.
+```bash
+# Windows
+.venv\Scripts\activate
 
-## Architecture Overview
+# macOS / Linux
+source .venv/bin/activate
+```
 
-- **Backend**: Flask API handling audio processing, file management, and state persistence. Uses `audio-separator` for ML tasks.
-- **Frontend**: React application for the user interface, communicating with the backend via REST API and SSE for real-time status.
+Install backend dependencies:
+
+```bash
+# Windows / Linux
+pip install -r requirements-win-linux.txt
+
+# macOS
+pip install -r requirements-macos.txt
+```
+
+These platform files include the shared backend dependency set from `requirements-base.txt`.
+
+## Running in Development
+
+### Backend + Frontend
+
+From the repo root:
+
+```bash
+npm run start
+```
+
+This starts:
+
+- Flask backend on `http://127.0.0.1:5000`
+- Vite frontend on `http://localhost:5173`
+
+### Electron Shell
+
+In another terminal:
+
+```bash
+cd electron
+npm run dev
+```
+
+Electron will launch the desktop shell and connect to the local backend/frontend dev servers.
+
+## Production Builds
+
+Build the renderer:
+
+```bash
+cd frontend
+npm run build
+```
+
+Create a Windows installer:
+
+```bash
+cd electron
+npm run dist:win
+```
+
+Other Electron packaging commands:
+
+```bash
+npm run pack
+npm run dist:mac
+npm run dist:linux
+```
+
+Packaged output is written to `dist-electron/`.
+
+## Architecture Summary
+
+- `frontend/` handles library, upload, editor, and settings UI.
+- `backend/` exposes REST and SSE endpoints for project state, processing, downloads, recovery, and system info.
+- `electron/` manages the desktop window, startup mode, backend sidecar lifecycle, and custom protocol/file access.
+
+The current migration direction is to use SQLite as the source of truth for project and file metadata while audio artifacts remain on disk.
+
+## Notes
+
+- The root `npm run start` command is for backend + frontend development, not packaged Electron output.
+- The Electron package version is defined in [electron/package.json](/E:/dev/unweave/electron/package.json).
+- API endpoints are documented in [API_DOCUMENTATION.md](API_DOCUMENTATION.md).

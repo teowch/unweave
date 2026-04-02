@@ -1,48 +1,99 @@
 # Unweave Backend
 
-The backend is a Flask-based API handling audio processing, file management, and real-time state updates.
+The backend is a Flask API that owns audio processing, project/file lookup, waveform access, download/export endpoints, recovery flows, and SSE updates for the renderer.
 
-### Documentation Index
+## Responsibilities
 
-- [Project Overview](../README.md)
-- [Frontend Documentation](../frontend/README.md)
-- [API Documentation](../API_DOCUMENTATION.md)
+- Accept file and URL processing requests
+- Coordinate stem separation and follow-up module runs
+- Expose the project library and project snapshots
+- Serve tracked files, waveform JSON, and ZIP exports
+- Publish long-running job progress over SSE
+- Report system and GPU status to the desktop UI
 
-## Setup
+## Important Directories
 
-1. **Python Environment**: Ensure Python 3.10+ is installed.
-2. **Virtual Environment**:
-   ```bash
-   python -m venv .venv
-   .venv\Scripts\activate  # Windows
-   source .venv/bin/activate  # Linux/Mac
-   ```
-3. **Dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-   This setup includes PyTorch with CUDA 12.4 support for GPU acceleration.
+- `routes/`: Flask blueprints for projects, audio processing, SSE, and settings
+- `services/`: orchestration, project/file access, SSE, and processing services
+- `utils/`: FFmpeg, hardware, waveform, sanitization, and related helpers
+- `requirements*.txt`: platform-specific dependency definitions
 
-4. **FFmpeg**:
-   - The project uses `static-ffmpeg` to automatically provision FFmpeg binaries.
-   - For optimal performance or troubleshooting, installing FFmpeg system-wide is recommended.
+## Environment
 
-## Key Services
+- Python 3.10+
+- Virtual environment expected at `backend/.venv`
 
-- **`AudioService`**: Orchestrates `audio-separator`, manages demultiplexing, and handles download logic.
-- **`AudioProject`**: Encapsulates the state of a single separation project, including tracking executed modules and metadata.
-- **`SSEManager` & `SSEMessageHandler`**: Manages Server-Sent Events to push progress updates to the frontend.
-- **`ProjectService`**: Manages file system operations, project creation, retrieval, and deletion.
+Set up:
 
-## Running the Server
+```bash
+cd backend
+python -m venv .venv
+```
+
+Activate:
+
+```bash
+# Windows
+.venv\Scripts\activate
+
+# macOS / Linux
+source .venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+# Windows / Linux
+pip install -r requirements-win-linux.txt
+
+# macOS
+pip install -r requirements-macos.txt
+```
+
+The backend dependency layout is:
+
+- `requirements-base.txt`: shared backend/runtime dependencies
+- `requirements-win-linux.txt`: Windows and Linux GPU/runtime stack, including `requirements-base.txt`
+- `requirements-macos.txt`: macOS runtime stack, including `requirements-base.txt`
+- `requirements.txt`: combined/general backend requirements file that is also present in the repo
+
+## Running the API
 
 ```bash
 python api.py
 ```
-- Runs on `http://127.0.0.1:5000` by default.
-- Set `FLASK_DEBUG=true` environment variable to enable debug mode.
 
-## Configuration
+Defaults:
 
-- **`models.json`**: local cache of model info (downloaded/managed by `audio-separator`).
-- **`modules.py`**: Registry of available processing modules. Add new models/separators here.
+- Host: Flask default host
+- Port: `5000`
+- Health endpoint: `GET /api/health`
+
+Optional environment variables:
+
+- `PORT`: override the backend port
+- `FLASK_DEBUG=true`: enable debug mode
+- `ELECTRON_MODE=1`: marks packaged/sidecar execution and changes FFmpeg path resolution
+
+## Core Route Groups
+
+- `projects_routes.py`
+  - history, project status, project snapshot, downloads, waveform, ZIP export, delete
+- `audio_routes.py`
+  - modules, active processing snapshot, process file, process URL, run modules, unify, recovery actions
+- `sse_routes.py`
+  - SSE stream subscription by job ID
+- `settings_routes.py`
+  - system info, GPU setup status, GPU re-detection
+
+## Runtime Notes
+
+- FFmpeg is resolved from bundled/vendor paths first, with a dev fallback to `static_ffmpeg`.
+- The backend now reads project state from the current service layer instead of relying on ad hoc folder scans alone.
+- Consistency repair is triggered on concrete missing tracked files, returning a `409` with `consistency_checking` metadata when applicable.
+
+## Related Docs
+
+- [Project Overview](../README.md)
+- [Frontend Guide](../frontend/README.md)
+- [API Reference](../API_DOCUMENTATION.md)
