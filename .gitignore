@@ -11,3 +11,4 @@ dist-electron/
 frontend/dist/
 electron/resources/
 vendor/
+.gpu-setup-complete
